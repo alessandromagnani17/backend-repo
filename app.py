@@ -1,5 +1,5 @@
 from flask import Flask
-
+from flask_cors import CORS  # Aggiungi questa importazione
 from dotenv import load_dotenv
 import os
 from routes.auth import auth_bp
@@ -7,6 +7,8 @@ from routes.auth import auth_bp
 load_dotenv()  # Carica variabili d'ambiente dal file .env
 
 app = Flask(__name__)
+CORS(app)  # Abilita CORS per tutte le rotte
+
 app.config['AWS_REGION'] = os.getenv('AWS_REGION')
 app.config['COGNITO_USER_POOL_ID'] = os.getenv('COGNITO_USER_POOL_ID')
 app.config['AWS_ACCESS_KEY_ID'] = os.getenv('AWS_ACCESS_KEY_ID')

@@ -1,4 +1,4 @@
-#!/Users/alessandromagnani/Desktop/Università/applicazioni-e-servizi-web/asw-project/backend/venv/bin/python3.12
+#!/Users/alessandromagnani/Desktop/Università/applicazioni-e-servizi-web/osteoarthritis-project/backend/venv/bin/python3.12
 
 import sys
 import json

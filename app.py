@@ -1,25 +1,24 @@
 from flask import Flask, jsonify, request
-from flask_cors import CORS  # Aggiungi questa importazione
+from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 import boto3
 from botocore.exceptions import ClientError
 
-load_dotenv()  # Carica variabili d'ambiente dal file .env
+load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Abilita CORS per tutte le rotte
+CORS(app)
 
 # Configura i parametri di AWS Cognito
-AWS_REGION = 'eu-north-1'  # Nome coerente per la regione AWS
-USER_POOL_ID = 'eu-north-1_e5XGPIsEs'
-CLIENT_ID = '2stplsf9hd8d3ks58jlrc2hfth'
+AWS_REGION = 'us-east-1'
+USER_POOL_ID = 'us-east-1_2usqleEd6'
+CLIENT_ID = '33qm0bgkrnilkc5lrkrh6hpkv'
 
 cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
 
 @app.route('/')
 def home():
-    # Restituisci un dizionario con le informazioni
     return jsonify({
         "AWS_REGION": AWS_REGION,
         "COGNITO_USER_POOL_ID": USER_POOL_ID
@@ -31,12 +30,17 @@ def register():
     try:
         response = cognito_client.sign_up(
             ClientId=CLIENT_ID,
-            Username=data['email'],
+            Username=data['username'],
             Password=data['password'],
-            UserAttributes=[{
-                'Name': 'email',
-                'Value': data['email']
-            }]
+            UserAttributes=[
+                {'Name': 'email', 'Value': data['email']},
+                {'Name': 'name', 'Value': data['nome']},
+                {'Name': 'family_name', 'Value': data['cognome']},
+                {'Name': 'birthdate', 'Value': data['data']},  # Formato YYYY-MM-DD
+                {'Name': 'phone_number', 'Value': data['telefono']},  # Formato internazionale (+39 per l'Italia)
+                {'Name': 'gender', 'Value': data['gender']},  # Aggiungi attributo gender
+                {'Name': 'address', 'Value': data['address']}  # Aggiungi attributo address
+            ]
         )
         return jsonify({"message": "User registered", "response": response}), 200
     except ClientError as e:

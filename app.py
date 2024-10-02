@@ -51,7 +51,13 @@ def register():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
+    
+    # Controlla che le chiavi email e password siano presenti
+    if 'email' not in data or 'password' not in data:
+        return jsonify({"error": "Email and password are required"}), 400
+
     try:
+        # Esegui il login con Cognito
         response = cognito_client.initiate_auth(
             ClientId=CLIENT_ID,
             AuthFlow='USER_PASSWORD_AUTH',
@@ -60,8 +66,23 @@ def login():
                 'PASSWORD': data['password']
             }
         )
-        return jsonify({"message": "Login successful", "id_token": response['AuthenticationResult']['IdToken']}), 200
+        
+        # Se il login è andato a buon fine, restituisci il token di autenticazione
+        return jsonify({
+            "message": "Login successful",
+            "id_token": response['AuthenticationResult']['IdToken']
+        }), 200
+
+    except cognito_client.exceptions.NotAuthorizedException:
+        # L'utente non è autorizzato (password errata o account bloccato)
+        return jsonify({"error": "Invalid credentials"}), 401
+    
+    except cognito_client.exceptions.UserNotFoundException:
+        # L'utente non è stato trovato
+        return jsonify({"error": "User does not exist"}), 404
+    
     except ClientError as e:
+        # Cattura altri errori generici dal client Cognito
         return jsonify({"error": str(e)}), 400
 
 if __name__ == "__main__":

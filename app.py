@@ -119,7 +119,7 @@ def login():
             totp_secret = totp_secret_response['SecretCode']
             
             # Generate QR code for Google Authenticator
-            qr_uri = f"otpauth://totp/{username}?secret={totp_secret}&issuer=YourAppName"
+            qr_uri = f"otpauth://totp/{username}?secret={totp_secret}&issuer=osteoarthritis"
             qr = qrcode.QRCode(
                 version=1,
                 error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -166,13 +166,20 @@ def verify_mfa():
     data = request.json
     print("MFA Verification Request Data:", data)  # Debugging output
 
+    # Validate input data
+    if 'session' not in data or 'code' not in data:
+        return jsonify({"error": "Session and code are required"}), 400
+
+    if len(data['code']) != 6 or not data['code'].isdigit():
+        return jsonify({"error": "Code must be a 6-digit number"}), 400
+
     try:
         # Verify the user's MFA code
         response = cognito_client.verify_software_token(
             Session=data['session'],  # Make sure this session is valid and passed correctly
             UserCode=data['code']      # Log this as well to confirm correct format
         )
-        
+
         if response['Status'] == 'SUCCESS':
             return jsonify({"message": "MFA verified"}), 200
         else:

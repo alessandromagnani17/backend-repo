@@ -46,7 +46,7 @@ def register():
                 {'Name': 'phone_number', 'Value': data['telefono']},  # Formato internazionale (+39 per l'Italia)
                 {'Name': 'gender', 'Value': data['gender']},  # Aggiungi attributo gender
                 {'Name': 'address', 'Value': data['address']},  # Aggiungi attributo address
-                {'Name': 'custom:CAP_code', 'Value': data['cap_code']},  # Aggiungi attributo custom:CAP_code
+                {'Name': 'custom:CAP_code', 'Value': str(data['cap_code'])},  # Aggiungi attributo custom:CAP_code
                 {'Name': 'custom:Tax_code', 'Value': data['tax_code']}  # Aggiungi attributo custom:Tax_code
             ]
         )

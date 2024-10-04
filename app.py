@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 import os
 import boto3
 from botocore.exceptions import ClientError
+import qrcode
+from io import BytesIO
+import base64
 
 load_dotenv()
 
@@ -88,8 +91,6 @@ def confirm_registration():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    print("Dati ricevuti per il login:", data)  # Log incoming data
-
     if 'email' not in data or 'password' not in data:
         return jsonify({"error": "Email and password are required"}), 400
 
@@ -103,16 +104,45 @@ def login():
                 'PASSWORD': data['password']
             }
         )
-        
-        # Handle MFA setup
+
+        # Handle MFA setup if required
         if 'ChallengeName' in response and response['ChallengeName'] == 'MFA_SETUP':
+            session = response['Session']
+            username = response['ChallengeParameters']['USER_ID_FOR_SRP']
+
+            print("Session for MFA Setup:", session)  # Log the session for debugging
+            
+            # Create a TOTP (Time-based One-Time Password) secret
+            totp_secret_response = cognito_client.associate_software_token(
+                Session=session
+            )
+            totp_secret = totp_secret_response['SecretCode']
+            
+            # Generate QR code for Google Authenticator
+            qr_uri = f"otpauth://totp/{username}?secret={totp_secret}&issuer=YourAppName"
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(qr_uri)
+            qr.make(fit=True)
+
+            # Convert QR code to image and then to base64 for frontend
+            img = qr.make_image(fill='black', back_color='white')
+            buffer = BytesIO()
+            img.save(buffer, format="PNG")
+            qr_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
             return jsonify({
-                "message": "MFA setup required.",
-                "session": response['Session'],
-                "challenge_name": response['ChallengeName']
+                "message": "MFA setup required",
+                "session": session,  # Make sure this session is stored correctly in the frontend
+                "qr_code": qr_base64,  # This will be rendered in the frontend
+                "secret": totp_secret
             }), 200
 
-        # Successful login, return ID token
+        # Successful login
         if 'AuthenticationResult' in response:
             return jsonify({
                 "message": "Login successful",
@@ -125,8 +155,32 @@ def login():
         return jsonify({"error": "Invalid credentials"}), 401
 
     except ClientError as e:
+        print("Errore nel login:", str(e))
         return jsonify({"error": str(e)}), 400
 
+
+
+
+@app.route('/verify-mfa', methods=['POST'])
+def verify_mfa():
+    data = request.json
+    print("MFA Verification Request Data:", data)  # Debugging output
+
+    try:
+        # Verify the user's MFA code
+        response = cognito_client.verify_software_token(
+            Session=data['session'],  # Make sure this session is valid and passed correctly
+            UserCode=data['code']      # Log this as well to confirm correct format
+        )
+        
+        if response['Status'] == 'SUCCESS':
+            return jsonify({"message": "MFA verified"}), 200
+        else:
+            return jsonify({"error": "MFA verification failed"}), 400
+
+    except ClientError as e:
+        print("Errore nella verifica MFA:", str(e))  # Log the error details for deeper insights
+        return jsonify({"error": str(e)}), 400
 
 
 

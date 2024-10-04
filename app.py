@@ -88,53 +88,54 @@ def confirm_registration():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    print("Dati ricevuti per il login:", data)  # Aggiunto per debug
+    print("Dati ricevuti per il login:", data)  # Log incoming data
 
-    # Controlla che le chiavi email e password siano presenti
     if 'email' not in data or 'password' not in data:
-        print("Errore: Email o password non forniti.")  # Aggiunto per debug
         return jsonify({"error": "Email and password are required"}), 400
 
     try:
-        # Esegui il login con Cognito
+        # Initiate Cognito login
         response = cognito_client.initiate_auth(
             ClientId=CLIENT_ID,
             AuthFlow='USER_PASSWORD_AUTH',
             AuthParameters={
-                'USERNAME': data['email'],  # Usa email come username
+                'USERNAME': data['email'],
                 'PASSWORD': data['password']
             }
         )
-        print("Risposta del login:", response)  # Aggiunto per debug
+        
+        # Handle MFA setup
+        if 'ChallengeName' in response and response['ChallengeName'] == 'MFA_SETUP':
+            return jsonify({
+                "message": "MFA setup required.",
+                "session": response['Session'],
+                "challenge_name": response['ChallengeName']
+            }), 200
 
-        # Se il login è andato a buon fine, restituisci il token di autenticazione
-        return jsonify({
-            "message": "Login successful",
-            "id_token": response['AuthenticationResult']['IdToken']
-        }), 200
+        # Successful login, return ID token
+        if 'AuthenticationResult' in response:
+            return jsonify({
+                "message": "Login successful",
+                "id_token": response['AuthenticationResult']['IdToken']
+            }), 200
+
+        return jsonify({"error": "Authentication failed. Please check your credentials."}), 400
 
     except cognito_client.exceptions.NotAuthorizedException:
-        print("Errore: Credenziali non autorizzate.")  # Aggiunto per debug
         return jsonify({"error": "Invalid credentials"}), 401
-    
-    except cognito_client.exceptions.UserNotFoundException:
-        print("Errore: Utente non trovato.")  # Aggiunto per debug
-        return jsonify({"error": "User does not exist"}), 404
-
-    except cognito_client.exceptions.UserNotConfirmedException:
-        print("Errore: Utente non confermato.")  # Aggiunto per debug
-        return jsonify({"error": "User is not confirmed. Please confirm your email."}), 400
 
     except ClientError as e:
-        print("Errore generico del ClientError:", str(e))  # Aggiunto per debug
         return jsonify({"error": str(e)}), 400
+
+
+
 
 
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080')
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080') 
     return response
 
 

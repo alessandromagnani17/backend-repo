@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError
 import qrcode
 from io import BytesIO
 import base64
+import json
 
 load_dotenv()
 
@@ -22,6 +23,10 @@ CLIENT_ID = '33qm0bgkrnilkc5lrkrh6hpkv'
 COGNITO_DOMAIN = 'https://osteoarthritis.auth.us-east-1.amazoncognito.com'
 
 cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
+
+# Configura i parametri di AWS S3
+S3_BUCKET = 'osteoarthritis-bucket'
+s3_client = boto3.client('s3')
 
 @app.route('/')
 def home():
@@ -189,6 +194,59 @@ def verify_mfa():
         print("Errore nella verifica MFA:", str(e))  # Log the error details for deeper insights
         return jsonify({"error": str(e)}), 400
 
+
+# Endpoint per ottenere i pazienti associati a un dottore
+@app.route('/doctors/<doctor_id>/patients', methods=['GET'])
+def get_patients(doctor_id):
+    # Qui dovresti recuperare i pazienti associati a doctor_id da DynamoDB
+    # Supponiamo di avere una funzione che lo fa:
+    patients = fetch_patients_by_doctor(doctor_id)  # Funzione da implementare
+    return jsonify(patients), 200
+
+# Funzione per recuperare pazienti da DynamoDB (da implementare)
+def fetch_patients_by_doctor(doctor_id):
+    # Implementa la logica per interagire con DynamoDB e ottenere i pazienti
+    pass
+
+# Endpoint per caricare una radiografia
+@app.route('/patients/<patient_id>/radiographs', methods=['POST'])
+def upload_radiograph(patient_id):
+    if 'file' not in request.files:
+        return jsonify({"error": "File is required"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    # Carica il file su S3
+    s3_key = f'radiographs/{patient_id}/{file.filename}'
+    try:
+        s3_client.upload_fileobj(file, S3_BUCKET, s3_key)
+    except ClientError as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Qui dovresti anche salvare l'URL della radiografia in DynamoDB
+    # Supponiamo di avere una funzione che lo fa:
+    save_radiograph_to_dynamodb(patient_id, s3_key)  # Funzione da implementare
+
+    return jsonify({"message": "Radiograph uploaded successfully", "url": s3_key}), 200
+
+# Funzione per salvare la radiografia in DynamoDB (da implementare)
+def save_radiograph_to_dynamodb(patient_id, s3_key):
+    # Implementa la logica per interagire con DynamoDB e salvare l'URL della radiografia
+    pass
+
+# Endpoint per ottenere le radiografie di un paziente
+@app.route('/patients/<patient_id>/radiographs', methods=['GET'])
+def get_radiographs(patient_id):
+    # Qui dovresti recuperare le radiografie associate a patient_id da DynamoDB
+    radiographs = fetch_radiographs_by_patient(patient_id)  # Funzione da implementare
+    return jsonify(radiographs), 200
+
+# Funzione per recuperare le radiografie da DynamoDB (da implementare)
+def fetch_radiographs_by_patient(patient_id):
+    # Implementa la logica per interagire con DynamoDB e ottenere le radiografie
+    pass
 
 
 

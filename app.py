@@ -95,135 +95,40 @@ def confirm_registration():
             "message": e.response['Error']['Message'] if e.response else "Unknown error"
         }), 400
 
-
 @app.route('/login', methods=['POST'])
 def login():
-    '''data = request.json
-    if 'email' not in data or 'password' not in data:
-        return jsonify({"error": "Email and password are required"}), 400
+    data = request.json
+    print("Ricevuti dati di login:", data)  # Stampa i dati ricevuti dal client
+
+    if 'idToken' not in data:
+        return jsonify({"error": "ID token is required"}), 400
 
     try:
-        # Initiate Cognito login
-        response = cognito_client.initiate_auth(
-            ClientId=CLIENT_ID,
-            AuthFlow='USER_PASSWORD_AUTH',
-            AuthParameters={
-                'USERNAME': data['email'],
-                'PASSWORD': data['password']
-            }
-        )
+        # Verifica il token ID ricevuto dal client
+        decoded_token = auth.verify_id_token(data['idToken'])
+        uid = decoded_token['uid']  # UID dell'utente autenticato
+        print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
 
-                # Decodifica il token ID per ottenere lo 'sub' (userId)
-        id_token = response['AuthenticationResult']['IdToken']
-        user_info = jwt.decode(id_token, options={"verify_signature": False})
-        user_id = user_info['sub']  # Questo è il Cognito userId
+        # Recupera l'utente da Firebase
+        user = auth.get_user(uid)
+        print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
 
+        return jsonify({
+            "message": "Login successful",
+            "email": user.email,  # Puoi includere ulteriori informazioni se necessario
+        }), 200
 
-        # Estrai le altre informazioni dall'IdToken
-        data = {
-            'email': user_info.get('email'),
-            'nome': user_info.get('name'),
-            'cognome': user_info.get('family_name'),
-            'data': user_info.get('birthdate'),
-            'telefono': user_info.get('phone_number'),
-            'gender': user_info.get('gender'),
-            'address': user_info.get('address'),
-            'cap_code': user_info.get('custom:CAP_code'),
-            'tax_code': user_info.get('custom:Tax_code')
-        }
-
-        # Salva l'utente in DynamoDB con 'userId' come chiave primaria
-        save_user_to_dynamodb(user_id, data)
-
-        # Successful login
-        if 'AuthenticationResult' in response:
-            # Return the IdToken along with other tokens
-            return jsonify({
-                "message": "Login successful",
-                "id_token": response['AuthenticationResult']['IdToken'],
-                "access_token": response['AuthenticationResult']['AccessToken'],  # Optionally include the AccessToken
-                "refresh_token": response['AuthenticationResult']['RefreshToken']  # Optionally include the RefreshToken
-            }), 200
-
-        return jsonify({"error": "Authentication failed. Please check your credentials."}), 400
-
-    except cognito_client.exceptions.NotAuthorizedException:
-        return jsonify({"error": "Invalid credentials"}), 401
-
-    except ClientError as e:
-        print("Errore nel login:", str(e))
-        return jsonify({"error": str(e)}, 400)
-
-
-def save_user_to_dynamodb(user_id, user_data):
-    item = {
-        'UserId': user_id,  # Usando lo 'userId' come chiave primaria
-        'email': user_data['email'],  # Email
-        'name': user_data['nome'],  # Nome
-        'family_name': user_data['cognome'],  # Cognome
-        'birthdate': user_data['data'],  # Data di nascita (YYYY-MM-DD)
-        'phone_number': user_data['telefono'],  # Numero di telefono in formato internazionale
-        'gender': user_data['gender'],  # Genere
-        'address': user_data['address'],  # Indirizzo
-        'custom:CAP_code': str(user_data['cap_code']),  # Codice CAP personalizzato
-        'custom:Tax_code': user_data['tax_code']  # Codice fiscale personalizzato
-    }
-    table.put_item(Item=item)'''
-
-'''
-# Endpoint per ottenere i pazienti associati a un dottore
-@app.route('/doctors/<doctor_id>/patients', methods=['GET'])
-def get_patients(doctor_id):
-    # Qui dovresti recuperare i pazienti associati a doctor_id da DynamoDB
-    # Supponiamo di avere una funzione che lo fa:
-    patients = fetch_patients_by_doctor(doctor_id)  # Funzione da implementare
-    return jsonify(patients), 200
-
-# Funzione per recuperare pazienti da DynamoDB (da implementare)
-def fetch_patients_by_doctor(doctor_id):
-    # Implementa la logica per interagire con DynamoDB e ottenere i pazienti
-    pass
-
-# Endpoint per caricare una radiografia
-@app.route('/patients/<patient_id>/radiographs', methods=['POST'])
-def upload_radiograph(patient_id):
-    if 'file' not in request.files:
-        return jsonify({"error": "File is required"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    # Carica il file su S3
-    s3_key = f'radiographs/{patient_id}/{file.filename}'
-    try:
-        s3_client.upload_fileobj(file, S3_BUCKET, s3_key)
-    except ClientError as e:
+    except firebase_admin.auth.InvalidIdTokenError:
+        print("Token ID non valido.")  # Stampa se il token ID non è valido
+        return jsonify({"error": "Invalid ID token"}), 401
+    except firebase_admin.auth.UserNotFoundError:
+        print("Utente non trovato per UID:", uid)  # Stampa se l'utente non è trovato
+        return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        print("Errore nel login:", str(e))  # Stampa l'errore generico
         return jsonify({"error": str(e)}), 500
 
-    # Qui dovresti anche salvare l'URL della radiografia in DynamoDB
-    # Supponiamo di avere una funzione che lo fa:
-    save_radiograph_to_dynamodb(patient_id, s3_key)  # Funzione da implementare
 
-    return jsonify({"message": "Radiograph uploaded successfully", "url": s3_key}), 200
-
-# Funzione per salvare la radiografia in DynamoDB (da implementare)
-def save_radiograph_to_dynamodb(patient_id, s3_key):
-    # Implementa la logica per interagire con DynamoDB e salvare l'URL della radiografia
-    pass
-
-# Endpoint per ottenere le radiografie di un paziente
-@app.route('/patients/<patient_id>/radiographs', methods=['GET'])
-def get_radiographs(patient_id):
-    # Qui dovresti recuperare le radiografie associate a patient_id da DynamoDB
-    radiographs = fetch_radiographs_by_patient(patient_id)  # Funzione da implementare
-    return jsonify(radiographs), 200
-
-# Funzione per recuperare le radiografie da DynamoDB (da implementare)
-def fetch_radiographs_by_patient(patient_id):
-    # Implementa la logica per interagire con DynamoDB e ottenere le radiografie
-    pass
-'''
 
 
 @app.after_request

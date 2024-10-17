@@ -69,7 +69,8 @@ def register():
     
     except Exception as e:
         print("Errore nella registrazione:", str(e))
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
+
 
 
 @app.route('/confirm', methods=['POST'])

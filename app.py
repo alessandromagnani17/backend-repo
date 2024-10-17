@@ -1,13 +1,12 @@
-from flask import Flask, jsonify, request, make_response
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 import boto3
 from botocore.exceptions import ClientError
-import qrcode
-from io import BytesIO
-import base64
-import json
+import jwt
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
 
 load_dotenv()
 
@@ -16,57 +15,60 @@ app = Flask(__name__)
 # Configura CORS per permettere l'accesso da 'http://localhost:8080'
 CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
 
-# Configura i parametri di AWS Cognito
-AWS_REGION = 'us-east-1'
-USER_POOL_ID = 'us-east-1_2usqleEd6'
-CLIENT_ID = '33qm0bgkrnilkc5lrkrh6hpkv'
-COGNITO_DOMAIN = 'https://osteoarthritis.auth.us-east-1.amazoncognito.com'
-
-cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
-
-# Configura i parametri di AWS S3
-S3_BUCKET = 'osteoarthritis-bucket'
-s3_client = boto3.client('s3')
+# Inizializza Firebase Admin
+cred = credentials.Certificate('config/firebase-adminsdk.json')
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 @app.route('/')
 def home():
-    return jsonify({
-        "AWS_REGION": AWS_REGION,
-        "COGNITO_USER_POOL_ID": USER_POOL_ID,
-        "COGNITO_DOMAIN": COGNITO_DOMAIN
-    })
+    return jsonify({"message": "Welcome to the API!"})
+
 
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    print("Dati ricevuti per la registrazione:", data)  # Aggiunto per debug
+    print("Dati ricevuti per la registrazione:", data)
+
     try:
-        # Usa il 'username' personalizzato per il campo 'Username'
-        response = cognito_client.sign_up(
-            ClientId=CLIENT_ID,
-            Username=data['username'],  # Il valore di 'email' sarà usato per identificare l'utente
-            Password=data['password'],
-            UserAttributes=[
-                {'Name': 'email', 'Value': data['email']},  # Email come attributo per l'utente
-                {'Name': 'name', 'Value': data['nome']},
-                {'Name': 'family_name', 'Value': data['cognome']},
-                {'Name': 'birthdate', 'Value': data['data']},  # Formato YYYY-MM-DD
-                {'Name': 'phone_number', 'Value': data['telefono']},  # Formato internazionale (+39 per l'Italia)
-                {'Name': 'gender', 'Value': data['gender']},  # Aggiungi attributo gender
-                {'Name': 'address', 'Value': data['address']},  # Aggiungi attributo address
-                {'Name': 'custom:CAP_code', 'Value': str(data['cap_code'])},  # Aggiungi attributo custom:CAP_code
-                {'Name': 'custom:Tax_code', 'Value': data['tax_code']}  # Aggiungi attributo custom:Tax_code
-            ]
+        # Crea l'utente in Firebase Authentication
+        user = auth.create_user(
+            email=data['email'],
+            password=data['password'],
+            display_name=data.get('username'),  # Username
+            disabled=False
         )
-        print("Risposta della registrazione:", response)  # Aggiunto per debug
-        
-        # Step to trigger the email link via Cognito.
+        print(f"Utente creato con successo: {user.uid}")
+
+        # Dati comuni tra dottori e pazienti
+        user_data = {
+            "userId": user.uid,
+            "name": data['nome'],
+            "family_name": data['cognome'],
+            "birthdate": data['data'],
+            "phone_number": data['telefono'],
+            "gender": data['gender'],
+            "address": data['address'],
+            "cap_code": data['cap_code'],
+            "tax_code": data['tax_code'],
+            "role": data['role']  # Aggiungi il ruolo (dottore o paziente)
+        }
+
+        # Se l'utente è un dottore, aggiungi anche il doctorID
+        if data['role'] == 'doctor':
+            user_data['doctorID'] = data['doctorID']
+
+        # Salva i dati nella collezione 'utenti'
+        db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
+        print("Dati utente salvati nel database:", user_data)
+
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",
-            "response": response
+            "response": user_data
         }), 200
-    except ClientError as e:
-        print("Errore nella registrazione:", str(e))  # Aggiunto per debug
+    
+    except Exception as e:
+        print("Errore nella registrazione:", str(e))
         return jsonify({"error": str(e)}), 400
 
 
@@ -92,9 +94,10 @@ def confirm_registration():
             "message": e.response['Error']['Message'] if e.response else "Unknown error"
         }), 400
 
+
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
+    '''data = request.json
     if 'email' not in data or 'password' not in data:
         return jsonify({"error": "Email and password are required"}), 400
 
@@ -109,9 +112,30 @@ def login():
             }
         )
 
+                # Decodifica il token ID per ottenere lo 'sub' (userId)
+        id_token = response['AuthenticationResult']['IdToken']
+        user_info = jwt.decode(id_token, options={"verify_signature": False})
+        user_id = user_info['sub']  # Questo è il Cognito userId
+
+
+        # Estrai le altre informazioni dall'IdToken
+        data = {
+            'email': user_info.get('email'),
+            'nome': user_info.get('name'),
+            'cognome': user_info.get('family_name'),
+            'data': user_info.get('birthdate'),
+            'telefono': user_info.get('phone_number'),
+            'gender': user_info.get('gender'),
+            'address': user_info.get('address'),
+            'cap_code': user_info.get('custom:CAP_code'),
+            'tax_code': user_info.get('custom:Tax_code')
+        }
+
+        # Salva l'utente in DynamoDB con 'userId' come chiave primaria
+        save_user_to_dynamodb(user_id, data)
+
         # Successful login
         if 'AuthenticationResult' in response:
-            # print("SUCCESSOOOOOOOOO --> " + repr(response))
             # Return the IdToken along with other tokens
             return jsonify({
                 "message": "Login successful",
@@ -129,6 +153,23 @@ def login():
         print("Errore nel login:", str(e))
         return jsonify({"error": str(e)}, 400)
 
+
+def save_user_to_dynamodb(user_id, user_data):
+    item = {
+        'UserId': user_id,  # Usando lo 'userId' come chiave primaria
+        'email': user_data['email'],  # Email
+        'name': user_data['nome'],  # Nome
+        'family_name': user_data['cognome'],  # Cognome
+        'birthdate': user_data['data'],  # Data di nascita (YYYY-MM-DD)
+        'phone_number': user_data['telefono'],  # Numero di telefono in formato internazionale
+        'gender': user_data['gender'],  # Genere
+        'address': user_data['address'],  # Indirizzo
+        'custom:CAP_code': str(user_data['cap_code']),  # Codice CAP personalizzato
+        'custom:Tax_code': user_data['tax_code']  # Codice fiscale personalizzato
+    }
+    table.put_item(Item=item)'''
+
+'''
 # Endpoint per ottenere i pazienti associati a un dottore
 @app.route('/doctors/<doctor_id>/patients', methods=['GET'])
 def get_patients(doctor_id):
@@ -181,7 +222,7 @@ def get_radiographs(patient_id):
 def fetch_radiographs_by_patient(patient_id):
     # Implementa la logica per interagire con DynamoDB e ottenere le radiografie
     pass
-
+'''
 
 
 @app.after_request

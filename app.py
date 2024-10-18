@@ -51,12 +51,14 @@ def register():
             "address": data['address'],
             "cap_code": data['cap_code'],
             "tax_code": data['tax_code'],
-            "role": data['role']  # Aggiungi il ruolo (dottore o paziente)
+            "role": data['role']  
         }
 
         # Se l'utente è un dottore, aggiungi anche il doctorID
         if data['role'] == 'doctor':
             user_data['doctorID'] = data['doctorID']
+        else:
+            user_data['DoctorRef'] = data['doctorID']
 
         # Salva i dati nella collezione 'utenti'
         db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
@@ -128,6 +130,25 @@ def login():
         print("Errore nel login:", str(e))  # Stampa l'errore generico
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/doctors', methods=['GET'])
+def get_doctors():
+    try:
+        # Recupera tutti gli utenti con il ruolo 'doctor' dal database Firestore
+        doctors_ref = db.collection('osteoarthritiis-db').where('role', '==', 'doctor').stream()
+        
+        doctors = []
+        for doctor in doctors_ref:
+            doctor_data = doctor.to_dict()
+            doctors.append(doctor_data)
+            print(f"Dottore recuperato: {doctor_data}")  # Stampa i dati di ogni dottore
+
+        # Restituisci la lista dei dottori come risposta JSON
+        return jsonify(doctors), 200
+    
+    except Exception as e:
+        print("Errore nel recupero dei dottori:", str(e))
+        return jsonify({"error": str(e)}), 500
 
 
 

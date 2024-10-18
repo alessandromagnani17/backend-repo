@@ -7,6 +7,9 @@ from botocore.exceptions import ClientError
 import jwt
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 load_dotenv()
 
@@ -32,6 +35,30 @@ def get_user_data_from_database(uid):
     else:
         return None  # Se l'utente non esiste
 
+
+def send_verification_email(email, link):
+    sender_email = "andyalemonta@gmail.com"  # Sostituisci con il tuo indirizzo email
+    sender_password = "vlpy jeea avjx feql"  # Sostituisci con l'App Password di Gmail
+
+    # Crea il messaggio
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = email
+    message["Subject"] = "Verifica il tuo indirizzo email"
+
+    # Corpo dell'email
+    body = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {link}"
+    message.attach(MIMEText(body, "plain"))
+
+    # Invia l'email
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()  # Sicurezza
+            server.login(sender_email, sender_password)  # Login
+            server.sendmail(sender_email, email, message.as_string())  # Invia l'email
+            print("Email di verifica inviata con successo!")
+    except Exception as e:
+        print("Errore nell'invio dell'email:", e)
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -71,6 +98,12 @@ def register():
         # Salva i dati nella collezione 'utenti'
         db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
         print("Dati utente salvati nel database:", user_data)
+
+        # Genera il link di verifica
+        verification_link = f"http://osteoarthritis-project.com/verify-email?uid={user.uid}"  # Sostituisci con l'URL reale della tua applicazione
+
+        # Invia l'email di verifica
+        send_verification_email(data['email'], verification_link)
 
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",

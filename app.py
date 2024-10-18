@@ -4,65 +4,186 @@ from dotenv import load_dotenv
 import os
 import boto3
 from botocore.exceptions import ClientError
+import jwt
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
 
-# Configura i parametri di AWS Cognito
-AWS_REGION = 'us-east-1'
-USER_POOL_ID = 'us-east-1_2usqleEd6'
-CLIENT_ID = '33qm0bgkrnilkc5lrkrh6hpkv'
+# Configura CORS per permettere l'accesso da 'http://localhost:8080'
+CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
 
-cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
+# Inizializza Firebase Admin
+cred = credentials.Certificate('config/firebase-adminsdk.json')
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 @app.route('/')
 def home():
-    return jsonify({
-        "AWS_REGION": AWS_REGION,
-        "COGNITO_USER_POOL_ID": USER_POOL_ID
-    })
+    return jsonify({"message": "Welcome to the API!"})
+
+def get_user_data_from_database(uid):
+    user_ref = db.collection('osteoarthritiis-db').document(uid)
+    user_data = user_ref.get()
+    if user_data.exists:
+        return user_data.to_dict()
+    else:
+        return None  # Se l'utente non esiste
+
 
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
+    print("Dati ricevuti per la registrazione:", data)
+
     try:
-        response = cognito_client.sign_up(
-            ClientId=CLIENT_ID,
-            Username=data['username'],
-            Password=data['password'],
-            UserAttributes=[
-                {'Name': 'email', 'Value': data['email']},
-                {'Name': 'name', 'Value': data['nome']},
-                {'Name': 'family_name', 'Value': data['cognome']},
-                {'Name': 'birthdate', 'Value': data['data']},  # Formato YYYY-MM-DD
-                {'Name': 'phone_number', 'Value': data['telefono']},  # Formato internazionale (+39 per l'Italia)
-                {'Name': 'gender', 'Value': data['gender']},  # Aggiungi attributo gender
-                {'Name': 'address', 'Value': data['address']},  # Aggiungi attributo address
-                {'Name': 'custom:CAP_code', 'Value': data['cap_code']},  # Aggiungi attributo custom:CAP_code
-                {'Name': 'custom:Tax_code', 'Value': data['tax_code']}  # Aggiungi attributo custom:Tax_code
-            ]
+        # Crea l'utente in Firebase Authentication
+        user = auth.create_user(
+            email=data['email'],
+            password=data['password'],
+            display_name=data.get('username'),  # Username
+            disabled=False
         )
-        return jsonify({"message": "User registered", "response": response}), 200
+        print(f"Utente creato con successo: {user.uid}")
+
+        # Dati comuni tra dottori e pazienti
+        user_data = {
+            "userId": user.uid,
+            "name": data['nome'],
+            "family_name": data['cognome'],
+            "birthdate": data['data'],
+            "phone_number": data['telefono'],
+            "gender": data['gender'],
+            "address": data['address'],
+            "cap_code": data['cap_code'],
+            "tax_code": data['tax_code'],
+            "role": data['role']  
+        }
+
+        # Se l'utente è un dottore, aggiungi anche il doctorID
+        if data['role'] == 'doctor':
+            user_data['doctorID'] = data['doctorID']
+        else:
+            user_data['DoctorRef'] = data['doctorID']
+
+        # Salva i dati nella collezione 'utenti'
+        db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
+        print("Dati utente salvati nel database:", user_data)
+
+        return jsonify({
+            "message": "User registered successfully. Please check your email for the confirmation link.",
+            "response": user_data
+        }), 200
+    
+    except Exception as e:
+        print("Errore nella registrazione:", str(e))
+        return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
+
+
+
+@app.route('/confirm', methods=['POST'])
+def confirm_registration():
+    data = request.json
+    print("Dati ricevuti per la conferma dell'email:", data)
+
+    if 'email' not in data:
+        return jsonify({"error": "Email is required"}), 400
+
+    try:
+        # In link-based verification, the user will click the link, no manual confirmation is needed.
+        return jsonify({
+            "message": "Email verified through link. No further action required."
+        }), 200
+
     except ClientError as e:
-        return jsonify({"error": str(e)}), 400
+        print("Errore nella conferma dell'email:", str(e))
+        return jsonify({
+            "error": str(e),
+            "code": e.response['Error']['Code'] if e.response else None,
+            "message": e.response['Error']['Message'] if e.response else "Unknown error"
+        }), 400
 
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
+    print("Ricevuti dati di login:", data)  # Stampa i dati ricevuti dal client
+
+    if 'idToken' not in data:
+        return jsonify({"error": "ID token is required"}), 400
+
     try:
-        response = cognito_client.initiate_auth(
-            ClientId=CLIENT_ID,
-            AuthFlow='USER_PASSWORD_AUTH',
-            AuthParameters={
-                'USERNAME': data['email'],
-                'PASSWORD': data['password']
-            }
-        )
-        return jsonify({"message": "Login successful", "id_token": response['AuthenticationResult']['IdToken']}), 200
-    except ClientError as e:
-        return jsonify({"error": str(e)}), 400
+        # Verifica il token ID ricevuto dal client
+        decoded_token = auth.verify_id_token(data['idToken'])
+        uid = decoded_token['uid']  # UID dell'utente autenticato
+        print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
+
+        # Recupera l'utente da Firebase
+        user = auth.get_user(uid)
+        print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
+        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
+
+
+        return jsonify({
+            "message": "Login successful",
+            "email": user.email,  # Puoi includere ulteriori informazioni se necessario
+        }), 200
+
+    except firebase_admin.auth.InvalidIdTokenError:
+        print("Token ID non valido.")  # Stampa se il token ID non è valido
+        return jsonify({"error": "Invalid ID token"}), 401
+    except firebase_admin.auth.UserNotFoundError:
+        print("Utente non trovato per UID:", uid)  # Stampa se l'utente non è trovato
+        return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        print("Errore nel login:", str(e))  # Stampa l'errore generico
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/doctors', methods=['GET'])
+def get_doctors():
+    try:
+        # Recupera tutti gli utenti con il ruolo 'doctor' dal database Firestore
+        doctors_ref = db.collection('osteoarthritiis-db').where('role', '==', 'doctor').stream()
+        
+        doctors = []
+        for doctor in doctors_ref:
+            doctor_data = doctor.to_dict()
+            doctors.append(doctor_data)
+            print(f"Dottore recuperato: {doctor_data}")  # Stampa i dati di ogni dottore
+
+        # Restituisci la lista dei dottori come risposta JSON
+        return jsonify(doctors), 200
+    
+    except Exception as e:
+        print("Errore nel recupero dei dottori:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/doctors/<int:doctor_id>/patients', methods=['GET'])
+def get_patients(doctor_id):
+    # Recupera i pazienti associati al dottore corrente
+    patients = User.query.filter_by(DoctorRef=doctor_id).all()
+    
+    # Trasforma i pazienti in un dizionario per la risposta
+    patients_list = [{
+        'id': patient.id,
+        'name': patient.name,
+        'DoctorRef': patient.DoctorRef,
+        # Aggiungi altri campi se necessario
+    } for patient in patients]
+    
+    return jsonify(patients_list)
+
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080') 
+    return response
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

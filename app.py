@@ -24,6 +24,14 @@ db = firestore.client()
 def home():
     return jsonify({"message": "Welcome to the API!"})
 
+def get_user_data_from_database(uid):
+    user_ref = db.collection('osteoarthritiis-db').document(uid)
+    user_data = user_ref.get()
+    if user_data.exists:
+        return user_data.to_dict()
+    else:
+        return None  # Se l'utente non esiste
+
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -150,6 +158,21 @@ def get_doctors():
         print("Errore nel recupero dei dottori:", str(e))
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/doctors/<int:doctor_id>/patients', methods=['GET'])
+def get_patients(doctor_id):
+    # Recupera i pazienti associati al dottore corrente
+    patients = User.query.filter_by(DoctorRef=doctor_id).all()
+    
+    # Trasforma i pazienti in un dizionario per la risposta
+    patients_list = [{
+        'id': patient.id,
+        'name': patient.name,
+        'DoctorRef': patient.DoctorRef,
+        # Aggiungi altri campi se necessario
+    } for patient in patients]
+    
+    return jsonify(patients_list)
 
 
 @app.after_request

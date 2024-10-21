@@ -77,6 +77,8 @@ def register():
 
         # Dati comuni tra dottori e pazienti
         user_data = {
+            "email": data['email'],
+            "username": data.get('username'),
             "userId": user.uid,
             "name": data['nome'],
             "family_name": data['cognome'],
@@ -168,10 +170,30 @@ def get_doctors():
     except Exception as e:
         print("Errore nel recupero dei dottori:", str(e))
         return jsonify({"error": str(e)}), 500
+    
+
+@app.route('/api/patients', methods=['GET'])
+def get_patients():
+    try:
+        # Recupera tutti gli utenti con il ruolo 'patient' dal database Firestore
+        patients_ref = db.collection('osteoarthritiis-db').where('role', '==', 'patient').stream()
+        
+        patients = []
+        for patient in patients_ref:
+            patient_data = patient.to_dict()
+            patients.append(patient_data)
+            print(f"Dottore recuperato: {patient_data}")  # Stampa i dati di ogni dottore
+
+        # Restituisci la lista dei pazienti come risposta JSON
+        return jsonify(patients), 200
+    
+    except Exception as e:
+        print("Errore nel recupero dei dottori:", str(e))
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/doctors/<int:doctor_id>/patients', methods=['GET'])
-def get_patients(doctor_id):
+def get_patients_from_doctor(doctor_id):
     # Recupera i pazienti associati al dottore corrente
     patients = User.query.filter_by(DoctorRef=doctor_id).all()
     

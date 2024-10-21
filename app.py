@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, make_response
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
@@ -114,29 +114,6 @@ def register():
         return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
 
 
-@app.route('/confirm', methods=['POST'])
-def confirm_registration():
-    data = request.json
-    print("Dati ricevuti per la conferma dell'email:", data)
-
-    if 'email' not in data:
-        return jsonify({"error": "Email is required"}), 400
-
-    try:
-        # In link-based verification, the user will click the link, no manual confirmation is needed.
-        return jsonify({
-            "message": "Email verified through link. No further action required."
-        }), 200
-
-    except ClientError as e:
-        print("Errore nella conferma dell'email:", str(e))
-        return jsonify({
-            "error": str(e),
-            "code": e.response['Error']['Code'] if e.response else None,
-            "message": e.response['Error']['Message'] if e.response else "Unknown error"
-        }), 400
-
-
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
@@ -226,45 +203,6 @@ def verify_email(uid):
         return jsonify({"error": "Utente non trovato"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080') 
-    return response
-
-
-@app.route('/verify-mfa', methods=['POST'])
-def verify_mfa():
-    data = request.json
-    print("MFA Verification Request Data:", data)  # Debugging output
-
-    # Validate input data
-    if 'session' not in data or 'code' not in data:
-        return jsonify({"error": "Session and code are required"}), 400
-
-    if len(data['code']) != 6 or not data['code'].isdigit():
-        return jsonify({"error": "Code must be a 6-digit number"}), 400
-
-    try:
-        # Verify the user's MFA code
-        response = cognito_client.verify_software_token(
-            Session=data['session'],  # Make sure this session is valid and passed correctly
-            UserCode=data['code']      # Log this as well to confirm correct format
-        )
-
-        if response['Status'] == 'SUCCESS':
-            return jsonify({"message": "MFA verified"}), 200
-        else:
-            return jsonify({"error": "MFA verification failed"}), 400
-
-    except ClientError as e:
-        print("Errore nella verifica MFA:", str(e))  # Log the error details for deeper insights
-        return jsonify({"error": str(e)}), 400
-
-
 
 
 @app.after_request

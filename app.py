@@ -126,12 +126,10 @@ def login():
         # Verifica il token ID ricevuto dal client
         decoded_token = auth.verify_id_token(data['idToken'])
         uid = decoded_token['uid']  # UID dell'utente autenticato
-        #print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
 
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
-        #print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
-        #print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
+        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
 
         if not user.email_verified:
             print("Email NON verificata!!")
@@ -141,10 +139,21 @@ def login():
         else:
             print("Email verificata!!")
 
+        user_doc = db.collection('osteoarthritiis-db').document(uid).get()
+
+        if not user_doc.exists:
+            return jsonify({"error": "User data not found in Firestore"}), 404
+
+        user_data = user_doc.to_dict()
+
+        # Aggiungo attributi di autenticazione a quelli della collezione su firestore
+        user_data['uid'] = user.uid
+        user_data['email'] = user.email
+
 
         return jsonify({
             "message": "Login successful",
-            "email": user.email,  # Puoi includere ulteriori informazioni se necessario
+            "user": user_data,  
         }), 200
 
     except firebase_admin.auth.InvalidIdTokenError:

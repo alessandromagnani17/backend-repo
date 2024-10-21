@@ -4,9 +4,12 @@ from dotenv import load_dotenv
 import os
 import boto3
 from botocore.exceptions import ClientError
-import qrcode
-from io import BytesIO
-import base64
+import jwt
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 load_dotenv()
 
@@ -15,54 +18,100 @@ app = Flask(__name__)
 # Configura CORS per permettere l'accesso da 'http://localhost:8080'
 CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
 
-# Configura i parametri di AWS Cognito
-AWS_REGION = 'us-east-1'
-USER_POOL_ID = 'us-east-1_2usqleEd6'
-CLIENT_ID = '33qm0bgkrnilkc5lrkrh6hpkv'
-COGNITO_DOMAIN = 'https://osteoarthritis.auth.us-east-1.amazoncognito.com'
-
-cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
+# Inizializza Firebase Admin
+cred = credentials.Certificate('config/firebase-adminsdk.json')
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 @app.route('/')
 def home():
-    return jsonify({
-        "AWS_REGION": AWS_REGION,
-        "COGNITO_USER_POOL_ID": USER_POOL_ID,
-        "COGNITO_DOMAIN": COGNITO_DOMAIN
-    })
+    return jsonify({"message": "Welcome to the API!"})
+
+def get_user_data_from_database(uid):
+    user_ref = db.collection('osteoarthritiis-db').document(uid)
+    user_data = user_ref.get()
+    if user_data.exists:
+        return user_data.to_dict()
+    else:
+        return None  # Se l'utente non esiste
+
+
+def send_verification_email(email, link):
+    sender_email = "andyalemonta@gmail.com"  # Sostituisci con il tuo indirizzo email
+    sender_password = "vlpy jeea avjx feql"  # Sostituisci con l'App Password di Gmail
+
+    # Crea il messaggio
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = email
+    message["Subject"] = "Verifica il tuo indirizzo email"
+
+    # Corpo dell'email
+    body = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {link}"
+    message.attach(MIMEText(body, "plain"))
+
+    # Invia l'email
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()  # Sicurezza
+            server.login(sender_email, sender_password)  # Login
+            server.sendmail(sender_email, email, message.as_string())  # Invia l'email
+            print("Email di verifica inviata con successo!")
+    except Exception as e:
+        print("Errore nell'invio dell'email:", e)
 
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    print("Dati ricevuti per la registrazione:", data)  # Aggiunto per debug
+    print("Dati ricevuti per la registrazione:", data)
+
     try:
-        # Usa il 'username' personalizzato per il campo 'Username'
-        response = cognito_client.sign_up(
-            ClientId=CLIENT_ID,
-            Username=data['username'],  # Il valore di 'email' sarà usato per identificare l'utente
-            Password=data['password'],
-            UserAttributes=[
-                {'Name': 'email', 'Value': data['email']},  # Email come attributo per l'utente
-                {'Name': 'name', 'Value': data['nome']},
-                {'Name': 'family_name', 'Value': data['cognome']},
-                {'Name': 'birthdate', 'Value': data['data']},  # Formato YYYY-MM-DD
-                {'Name': 'phone_number', 'Value': data['telefono']},  # Formato internazionale (+39 per l'Italia)
-                {'Name': 'gender', 'Value': data['gender']},  # Aggiungi attributo gender
-                {'Name': 'address', 'Value': data['address']},  # Aggiungi attributo address
-                {'Name': 'custom:CAP_code', 'Value': data['cap_code']},  # Aggiungi attributo custom:CAP_code
-                {'Name': 'custom:Tax_code', 'Value': data['tax_code']}  # Aggiungi attributo custom:Tax_code
-            ]
+        # Crea l'utente in Firebase Authentication
+        user = auth.create_user(
+            email=data['email'],
+            password=data['password'],
+            display_name=data.get('username'),  # Username
+            disabled=False
         )
-        print("Risposta della registrazione:", response)  # Aggiunto per debug
-        
-        # Step to trigger the email link via Cognito.
+        print(f"Utente creato con successo: {user.uid}")
+
+        # Dati comuni tra dottori e pazienti
+        user_data = {
+            "userId": user.uid,
+            "name": data['nome'],
+            "family_name": data['cognome'],
+            "birthdate": data['data'],
+            "phone_number": data['telefono'],
+            "gender": data['gender'],
+            "address": data['address'],
+            "cap_code": data['cap_code'],
+            "tax_code": data['tax_code'],
+            "role": data['role']  
+        }
+
+        # Se l'utente è un dottore, aggiungi anche il doctorID
+        if data['role'] == 'doctor':
+            user_data['doctorID'] = data['doctorID']
+        else:
+            user_data['DoctorRef'] = data['doctorID']
+
+        # Salva i dati nella collezione 'utenti'
+        db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
+        print("Dati utente salvati nel database:", user_data)
+
+        # Genera il link di verifica
+        verification_link = f"http://localhost:8080/verify-email/{user.uid}"
+        # Invia l'email di verifica
+        send_verification_email(data['email'], verification_link)
+
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",
-            "response": response
+            "response": user_data
         }), 200
-    except ClientError as e:
-        print("Errore nella registrazione:", str(e))  # Aggiunto per debug
-        return jsonify({"error": str(e)}), 400
+    
+    except Exception as e:
+        print("Errore nella registrazione:", str(e))
+        return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
 
 
 @app.route('/confirm', methods=['POST'])
@@ -91,74 +140,100 @@ def confirm_registration():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    if 'email' not in data or 'password' not in data:
-        return jsonify({"error": "Email and password are required"}), 400
+    print("Ricevuti dati di login:", data)  # Stampa i dati ricevuti dal client
+
+    if 'idToken' not in data:
+        return jsonify({"error": "ID token is required"}), 400
 
     try:
-        # Initiate Cognito login
-        response = cognito_client.initiate_auth(
-            ClientId=CLIENT_ID,
-            AuthFlow='USER_PASSWORD_AUTH',
-            AuthParameters={
-                'USERNAME': data['email'],
-                'PASSWORD': data['password']
-            }
-        )
+        # Verifica il token ID ricevuto dal client
+        decoded_token = auth.verify_id_token(data['idToken'])
+        uid = decoded_token['uid']  # UID dell'utente autenticato
+        print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
 
-        # Handle MFA setup if required
-        if 'ChallengeName' in response and response['ChallengeName'] == 'MFA_SETUP':
-            session = response['Session']
-            username = response['ChallengeParameters']['USER_ID_FOR_SRP']
-
-            print("Session for MFA Setup:", session)  # Log the session for debugging
-            
-            # Create a TOTP (Time-based One-Time Password) secret
-            totp_secret_response = cognito_client.associate_software_token(
-                Session=session
-            )
-            totp_secret = totp_secret_response['SecretCode']
-            
-            # Generate QR code for Google Authenticator
-            qr_uri = f"otpauth://totp/{username}?secret={totp_secret}&issuer=osteoarthritis"
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=10,
-                border=4,
-            )
-            qr.add_data(qr_uri)
-            qr.make(fit=True)
-
-            # Convert QR code to image and then to base64 for frontend
-            img = qr.make_image(fill='black', back_color='white')
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            qr_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            return jsonify({
-                "message": "MFA setup required",
-                "session": session,  # Make sure this session is stored correctly in the frontend
-                "qr_code": qr_base64,  # This will be rendered in the frontend
-                "secret": totp_secret
-            }), 200
-
-        # Successful login
-        if 'AuthenticationResult' in response:
-            return jsonify({
-                "message": "Login successful",
-                "id_token": response['AuthenticationResult']['IdToken']
-            }), 200
-
-        return jsonify({"error": "Authentication failed. Please check your credentials."}), 400
-
-    except cognito_client.exceptions.NotAuthorizedException:
-        return jsonify({"error": "Invalid credentials"}), 401
-
-    except ClientError as e:
-        print("Errore nel login:", str(e))
-        return jsonify({"error": str(e)}), 400
+        # Recupera l'utente da Firebase
+        user = auth.get_user(uid)
+        print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
+        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
 
 
+        return jsonify({
+            "message": "Login successful",
+            "email": user.email,  # Puoi includere ulteriori informazioni se necessario
+        }), 200
+
+    except firebase_admin.auth.InvalidIdTokenError:
+        print("Token ID non valido.")  # Stampa se il token ID non è valido
+        return jsonify({"error": "Invalid ID token"}), 401
+    except firebase_admin.auth.UserNotFoundError:
+        print("Utente non trovato per UID:", uid)  # Stampa se l'utente non è trovato
+        return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        print("Errore nel login:", str(e))  # Stampa l'errore generico
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/doctors', methods=['GET'])
+def get_doctors():
+    try:
+        # Recupera tutti gli utenti con il ruolo 'doctor' dal database Firestore
+        doctors_ref = db.collection('osteoarthritiis-db').where('role', '==', 'doctor').stream()
+        
+        doctors = []
+        for doctor in doctors_ref:
+            doctor_data = doctor.to_dict()
+            doctors.append(doctor_data)
+            print(f"Dottore recuperato: {doctor_data}")  # Stampa i dati di ogni dottore
+
+        # Restituisci la lista dei dottori come risposta JSON
+        return jsonify(doctors), 200
+    
+    except Exception as e:
+        print("Errore nel recupero dei dottori:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/doctors/<int:doctor_id>/patients', methods=['GET'])
+def get_patients(doctor_id):
+    # Recupera i pazienti associati al dottore corrente
+    patients = User.query.filter_by(DoctorRef=doctor_id).all()
+    
+    # Trasforma i pazienti in un dizionario per la risposta
+    patients_list = [{
+        'id': patient.id,
+        'name': patient.name,
+        'DoctorRef': patient.DoctorRef,
+        # Aggiungi altri campi se necessario
+    } for patient in patients]
+    
+    return jsonify(patients_list)
+
+
+@app.route('/verify-email/<string:uid>', methods=['GET'])
+def verify_email(uid):
+    if not uid:
+        return jsonify({"error": "Missing user ID"}), 400
+    
+    try:
+        # Verifica che l'utente esista su Firebase
+        user = auth.get_user(uid)
+        
+        # Imposta l'email come verificata
+        auth.update_user(uid, email_verified=True)
+
+        return jsonify({"message": "Email verificata con successo!"}), 200
+    except auth.UserNotFoundError:
+        return jsonify({"error": "Utente non trovato"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080') 
+    return response
 
 
 @app.route('/verify-mfa', methods=['POST'])

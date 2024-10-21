@@ -117,7 +117,7 @@ def register():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    print("Ricevuti dati di login:", data)  # Stampa i dati ricevuti dal client
+    #print("Ricevuti dati di login:", data)  # Stampa i dati ricevuti dal client
 
     if 'idToken' not in data:
         return jsonify({"error": "ID token is required"}), 400
@@ -126,12 +126,20 @@ def login():
         # Verifica il token ID ricevuto dal client
         decoded_token = auth.verify_id_token(data['idToken'])
         uid = decoded_token['uid']  # UID dell'utente autenticato
-        print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
+        #print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
 
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
-        print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
-        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
+        #print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
+        #print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
+
+        if not user.email_verified:
+            print("Email NON verificata!!")
+            return jsonify({
+                "message": "Email not verified"
+            }), 403
+        else:
+            print("Email verificata!!")
 
 
         return jsonify({

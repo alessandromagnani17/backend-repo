@@ -7,6 +7,9 @@ from botocore.exceptions import ClientError
 import jwt
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 load_dotenv()
 
@@ -32,6 +35,30 @@ def get_user_data_from_database(uid):
     else:
         return None  # Se l'utente non esiste
 
+
+def send_verification_email(email, link):
+    sender_email = "andyalemonta@gmail.com"  # Sostituisci con il tuo indirizzo email
+    sender_password = "vlpy jeea avjx feql"  # Sostituisci con l'App Password di Gmail
+
+    # Crea il messaggio
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = email
+    message["Subject"] = "Verifica il tuo indirizzo email"
+
+    # Corpo dell'email
+    body = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {link}"
+    message.attach(MIMEText(body, "plain"))
+
+    # Invia l'email
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()  # Sicurezza
+            server.login(sender_email, sender_password)  # Login
+            server.sendmail(sender_email, email, message.as_string())  # Invia l'email
+            print("Email di verifica inviata con successo!")
+    except Exception as e:
+        print("Errore nell'invio dell'email:", e)
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -72,6 +99,11 @@ def register():
         db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
         print("Dati utente salvati nel database:", user_data)
 
+        # Genera il link di verifica
+        verification_link = f"http://localhost:8080/verify-email/{user.uid}"
+        # Invia l'email di verifica
+        send_verification_email(data['email'], verification_link)
+
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",
             "response": user_data
@@ -81,29 +113,6 @@ def register():
         print("Errore nella registrazione:", str(e))
         return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
 
-
-
-@app.route('/confirm', methods=['POST'])
-def confirm_registration():
-    data = request.json
-    print("Dati ricevuti per la conferma dell'email:", data)
-
-    if 'email' not in data:
-        return jsonify({"error": "Email is required"}), 400
-
-    try:
-        # In link-based verification, the user will click the link, no manual confirmation is needed.
-        return jsonify({
-            "message": "Email verified through link. No further action required."
-        }), 200
-
-    except ClientError as e:
-        print("Errore nella conferma dell'email:", str(e))
-        return jsonify({
-            "error": str(e),
-            "code": e.response['Error']['Code'] if e.response else None,
-            "message": e.response['Error']['Message'] if e.response else "Unknown error"
-        }), 400
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -122,6 +131,8 @@ def login():
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
         print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
+        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
+
 
         return jsonify({
             "message": "Login successful",
@@ -173,6 +184,25 @@ def get_patients(doctor_id):
     } for patient in patients]
     
     return jsonify(patients_list)
+
+
+@app.route('/verify-email/<string:uid>', methods=['GET'])
+def verify_email(uid):
+    if not uid:
+        return jsonify({"error": "Missing user ID"}), 400
+    
+    try:
+        # Verifica che l'utente esista su Firebase
+        user = auth.get_user(uid)
+        
+        # Imposta l'email come verificata
+        auth.update_user(uid, email_verified=True)
+
+        return jsonify({"message": "Email verificata con successo!"}), 200
+    except auth.UserNotFoundError:
+        return jsonify({"error": "Utente non trovato"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.after_request

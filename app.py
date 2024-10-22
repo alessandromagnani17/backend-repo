@@ -119,7 +119,6 @@ def register():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    print("Ricevuti dati di login:", data)  # Stampa i dati ricevuti dal client
 
     if 'idToken' not in data:
         return jsonify({"error": "ID token is required"}), 400
@@ -127,29 +126,33 @@ def login():
     try:
         # Verifica il token ID ricevuto dal client
         decoded_token = auth.verify_id_token(data['idToken'])
-        uid = decoded_token['uid']  # UID dell'utente autenticato
-        print("Token ID verificato. UID:", uid)  # Stampa l'UID dell'utente autenticato
+        uid = decoded_token['uid']  
 
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
-        print("Utente recuperato:", user.email)  # Stampa l'email dell'utente recuperato
-        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
 
+        # Recupera i dati dell'utente da Firestore
+        user_ref = db.collection('osteoarthritiis-db').document(uid).get()
+        user_data = user_ref.to_dict()
 
         return jsonify({
             "message": "Login successful",
-            "email": user.email,  # Puoi includere ulteriori informazioni se necessario
+            "email": user.email,
+            "doctorId": user_data.get('doctorID'),  # Recupera il doctorID
+            "role": user_data.get('role')  # Recupera il role
         }), 200
 
-    except firebase_admin.auth.InvalidIdTokenError:
-        print("Token ID non valido.")  # Stampa se il token ID non è valido
-        return jsonify({"error": "Invalid ID token"}), 401
-    except firebase_admin.auth.UserNotFoundError:
-        print("Utente non trovato per UID:", uid)  # Stampa se l'utente non è trovato
-        return jsonify({"error": "User not found"}), 404
+    except firebase_admin.auth.InvalidIdTokenError as e:
+        print("Token ID non valido:", e)  # Stampa se il token ID non è valido
+        return jsonify({"error": "Invalid ID token", "details": str(e)}), 401
+    except firebase_admin.auth.UserNotFoundError as e:
+        print("Utente non trovato per UID:", uid, "Errore:", e)  # Stampa se l'utente non è trovato
+        return jsonify({"error": "User not found", "details": str(e)}), 404
     except Exception as e:
         print("Errore nel login:", str(e))  # Stampa l'errore generico
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
+
 
 
 @app.route('/api/doctors', methods=['GET'])
@@ -192,20 +195,27 @@ def get_patients():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/doctors/<int:doctor_id>/patients', methods=['GET'])
+@app.route('/api/<doctor_id>/patients', methods=['GET'])
 def get_patients_from_doctor(doctor_id):
-    # Recupera i pazienti associati al dottore corrente
-    patients = User.query.filter_by(DoctorRef=doctor_id).all()
-    
-    # Trasforma i pazienti in un dizionario per la risposta
-    patients_list = [{
-        'id': patient.id,
-        'name': patient.name,
-        'DoctorRef': patient.DoctorRef,
-        # Aggiungi altri campi se necessario
-    } for patient in patients]
-    
-    return jsonify(patients_list)
+    try:
+        print(f"Richiesta ricevuta per Doctor ID: {doctor_id}")  # Debug
+        # Recupera tutti i pazienti associati al dottore corrente in Firestore
+        patients_ref = db.collection('osteoarthritiis-db').where('DoctorRef', '==', doctor_id).stream()
+
+        patients = []
+        for patient in patients_ref:
+            patient_data = patient.to_dict()
+            patients.append(patient_data)
+            print(f"Paziente recuperato per il dottore {doctor_id}: {patient_data}")
+
+        print("patients: ", patients)  # Stampa la lista dei pazienti
+        # Restituisci la lista dei pazienti come risposta JSON
+        return jsonify(patients), 200
+
+    except Exception as e:
+        print(f"Errore nel recupero dei pazienti per il dottore {doctor_id}: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/verify-email/<string:uid>', methods=['GET'])
@@ -227,12 +237,22 @@ def verify_email(uid):
         return jsonify({"error": str(e)}), 500
 
 
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080') 
-    return response
+'''@app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
+def get_radiographs(patient_id):
+    try:
+        # Recupera le radiografie per il paziente specificato
+        # Supponendo che tu abbia una collezione "radiographs" nel tuo database Firestore
+        radiographs_ref = db.collection('radiographs').where('patientId', '==', patient_id).stream()
+
+        radiographs = []
+        for radiograph in radiographs_ref:
+            radiographs.append(radiograph.to_dict())
+
+        return jsonify(radiographs), 200
+    
+    except Exception as e:
+        print("Errore nel recupero delle radiografie:", str(e))
+        return jsonify({"error": str(e)}), 500'''
 
 
 if __name__ == "__main__":

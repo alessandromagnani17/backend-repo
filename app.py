@@ -10,6 +10,9 @@ from firebase_admin import credentials, auth, firestore
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from google.cloud import storage
+from google.oauth2 import service_account 
+
 
 load_dotenv()
 
@@ -18,10 +21,23 @@ app = Flask(__name__)
 # Configura CORS per permettere l'accesso da 'http://localhost:8080'
 CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
 
+
+# Percorso dei file delle credenziali
+basedir = os.path.abspath(os.path.dirname(__file__))
+firebase_cred_path = os.path.join(basedir, 'config', 'firebase-adminsdk.json')
+gcs_cred_path = os.path.join(basedir, 'config', 'meta-geography-438711-r1-de4779cd8c73.json')
+
+# Imposta la variabile d'ambiente per le credenziali di Google Cloud Storage
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_cred_path
+
 # Inizializza Firebase Admin
-cred = credentials.Certificate('config/firebase-adminsdk.json')
+cred = credentials.Certificate(firebase_cred_path)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# Crea il client di Google Cloud Storage
+storage_client = storage.Client()
+
 
 @app.route('/')
 def home():
@@ -195,6 +211,7 @@ def get_patients():
         return jsonify({"error": str(e)}), 500
 
 
+
 @app.route('/api/<doctor_id>/patients', methods=['GET'])
 def get_patients_from_doctor(doctor_id):
     try:
@@ -237,7 +254,8 @@ def verify_email(uid):
         return jsonify({"error": str(e)}), 500
 
 
-'''@app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
+
+@app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
 def get_radiographs(patient_id):
     try:
         # Recupera le radiografie per il paziente specificato
@@ -252,7 +270,69 @@ def get_radiographs(patient_id):
     
     except Exception as e:
         print("Errore nel recupero delle radiografie:", str(e))
-        return jsonify({"error": str(e)}), 500'''
+        return jsonify({"error": str(e)}), 500
+    
+
+
+def upload_file_to_gcs(file, patient_id):
+    """Funzione per caricare file su Google Cloud Storage."""
+    print(f"File ricevuto: {file.filename}, Tipo: {file.content_type}")  # Debug
+
+    # Crea un client per Google Cloud Storage
+    storage_client = storage.Client()
+    
+    # Nome del bucket su Google Cloud Storage
+    bucket_name = 'osteoarthritis-radiographs-archive'
+    bucket = storage_client.bucket(bucket_name)
+    
+    # Definisci il nome del file all'interno del bucket
+    blob = bucket.blob(f"{patient_id}/{file.filename}")
+    
+    # Carica il file
+    blob.upload_from_file(file, content_type=file.content_type)    
+
+    # Restituisci l'URL pubblico del file
+    blob.make_public()
+    return blob.public_url
+
+
+
+
+
+
+@app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
+def upload_radiograph(patient_id):
+    print("Ricevuta richiesta di caricamento radiografia")  # Debug
+
+    if 'file' not in request.files or 'patientId' not in request.form:
+        print("File o patientId mancante")  # Debug
+        return jsonify({"error": "File o patientId mancante"}), 400
+
+    file = request.files['file']
+    patient_id = request.form['patientId']
+
+    if file.filename == '':
+        print("Nessun file selezionato")  # Debug
+        return jsonify({"error": "Nessun file selezionato"}), 400
+
+    try:
+        print(f"File ricevuto: {file.filename}, ID Paziente: {patient_id}")  # Debug
+        # Carica il file su Google Cloud Storage
+        file_url = upload_file_to_gcs(file, patient_id)
+
+        # Salva l'URL del file nella documentazione del paziente su Firestore
+        patient_ref = db.collection('osteoarthritiis-db').document(patient_id)
+        patient_ref.update({
+            'radiographs': firestore.ArrayUnion([file_url])
+        })
+
+        print(f"File caricato con successo, URL: {file_url}")  # Debug
+        return jsonify({"message": "Radiografia caricata con successo!", "fileUrl": file_url}), 200
+
+    except Exception as e:
+        print(f"Errore durante l'upload: {str(e)}")  # Stampa l'errore
+        return jsonify({"error": str(e)}), 500
+
 
 
 if __name__ == "__main__":

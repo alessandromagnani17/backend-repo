@@ -78,6 +78,7 @@ def register():
         # Dati comuni tra dottori e pazienti
         user_data = {
             "userId": user.uid,
+            "email": data['email'],
             "name": data['nome'],
             "family_name": data['cognome'],
             "birthdate": data['data'],
@@ -86,7 +87,8 @@ def register():
             "address": data['address'],
             "cap_code": data['cap_code'],
             "tax_code": data['tax_code'],
-            "role": data['role']  
+            "role": data['role'],
+            "loginAttemptsLeft": 5
         }
 
         # Se l'utente è un dottore, aggiungi anche il doctorID
@@ -146,10 +148,12 @@ def login():
 
         user_data = user_doc.to_dict()
 
+        attempts_left = user_data.get('loginAttemptsLeft', 0)
+
         # Aggiungo attributi di autenticazione a quelli della collezione su firestore
         user_data['uid'] = user.uid
         user_data['email'] = user.email
-
+        user_data['attemptsLeft'] = attempts_left
 
         return jsonify({
             "message": "Login successful",
@@ -165,6 +169,45 @@ def login():
     except Exception as e:
         print("Errore nel login:", str(e))  # Stampa l'errore generico
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/decrement-attempts', methods=['POST'])
+def decrement_attempts():
+    data = request.json
+    email = data.get('email')  
+
+    print("Email ricevuta: " + email)
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    # Recupera il documento dell'utente da Firestore cercando per email
+    user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
+
+    user_data = None
+    for user_doc in user_query:
+        user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
+        uid = user_doc.id  # Ottieni l'ID del documento
+        print("Uid trovato: " + uid)
+
+    if user_data is None:
+        print("Non trovo nessun utente")
+        return jsonify({"error": "User not found"}), 404
+
+    # Decrementa i tentativi
+    attempts_left = user_data.get('loginAttemptsLeft', 0)
+
+    print("Tentativi letti: " + str(attempts_left))
+
+    if attempts_left > 0:
+        db.collection('osteoarthritiis-db').document(uid).update({
+            'loginAttemptsLeft': attempts_left - 1
+        })
+        attempts_left -= 1  # Decrementa il valore per la risposta
+
+    return jsonify({"message": "Attempts decremented", "loginAttemptsLeft": attempts_left}), 200
+
+
 
 
 @app.route('/api/doctors', methods=['GET'])
@@ -228,6 +271,82 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     response.headers.add('Access-Control-Allow-Origin', 'http://localhost:8080') 
     return response
+
+
+
+
+
+
+# PROVE RESNET50
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.preprocessing import image
+import io
+
+# Ricrea il modello usato durante il training
+img_shape = (224, 224, 3)
+
+base_model = tf.keras.applications.ResNet50(
+    input_shape=img_shape,
+    include_top=False,
+    weights=None  # Non caricare i pesi pre-addestrati di ImageNet, poiché caricherai i tuoi pesi
+)
+
+# Rendi i layer del modello base addestrabili (come nel tuo codice di training)
+for layer in base_model.layers:
+    layer.trainable = True
+
+# Ricrea la parte superiore del modello
+model = tf.keras.models.Sequential([
+    base_model,
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Dense(5, activation='softmax')  # Assumendo che tu abbia 5 classi
+])
+
+model.load_weights(r"C:\Users\Utente\Downloads\weights_epoch_89.weights.h5")
+
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+
+    # Carica l'immagine direttamente dalla memoria
+    img = image.load_img(io.BytesIO(file.read()), target_size=(224, 224))
+
+    # Prepara l'immagine per la predizione
+    img_array = image.img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)  # Aggiungi dimensione batch
+    img_array /= 255.0  # Normalizza l'immagine
+
+    # Fai la predizione
+    predictions = model.predict(img_array)
+
+    # Trova la classe con la massima probabilità
+    predicted_class = np.argmax(predictions[0])  
+    confidence = float(np.max(predictions[0]))  # Fiducia nella previsione
+
+    # Mappa personalizzata per le tue 5 classi
+    class_labels = {
+        0: 'Classe 1: Normale',
+        1: 'Classe 2: Lieve osteoartrite',
+        2: 'Classe 3: Moderata osteoartrite',
+        3: 'Classe 4: Grave osteoartrite',
+        4: 'Classe 5: Avanzata osteoartrite'
+    }
+
+    # Gestisci i casi in cui predicted_class non è in class_labels (non necessario in questo caso, ma per sicurezza)
+    predicted_label = class_labels.get(predicted_class, 'Unknown class')
+
+    return jsonify({
+        'predicted_class': predicted_label,
+        'confidence': confidence  # Restituisce anche la fiducia della previsione
+    })
+
+
 
 
 if __name__ == "__main__":

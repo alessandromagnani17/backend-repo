@@ -1,4 +1,4 @@
-#!/Users/alessandromagnani/Desktop/Università/applicazioni-e-servizi-web/osteoarthritis-project/backend/venv/bin/python3.12
+#!/Users/alessandromagnani/Desktop/Università/applicazioni-e-servizi-web/osteoarthritis-project/backend/venv/bin/python3
 # -*- coding: utf-8 -*-
 # Copyright 2024 Google LLC
 #

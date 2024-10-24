@@ -21,7 +21,6 @@ app = Flask(__name__)
 # Configura CORS per permettere l'accesso da 'http://localhost:8080'
 CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
 
-
 # Percorso dei file delle credenziali
 basedir = os.path.abspath(os.path.dirname(__file__))
 firebase_cred_path = os.path.join(basedir, 'config', 'firebase-adminsdk.json')
@@ -96,6 +95,7 @@ def register():
             "email": data['email'],
             "username": data.get('username'),
             "userId": user.uid,
+            "email": data['email'],
             "name": data['nome'],
             "family_name": data['cognome'],
             "birthdate": data['data'],
@@ -104,7 +104,8 @@ def register():
             "address": data['address'],
             "cap_code": data['cap_code'],
             "tax_code": data['tax_code'],
-            "role": data['role']  
+            "role": data['role'],
+            "loginAttemptsLeft": 5
         }
 
         # Se l'utente è un dottore, aggiungi anche il doctorID
@@ -142,20 +143,37 @@ def login():
     try:
         # Verifica il token ID ricevuto dal client
         decoded_token = auth.verify_id_token(data['idToken'])
-        uid = decoded_token['uid']  
+        uid = decoded_token['uid']  # UID dell'utente autenticato
 
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
+        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
 
-        # Recupera i dati dell'utente da Firestore
-        user_ref = db.collection('osteoarthritiis-db').document(uid).get()
-        user_data = user_ref.to_dict()
+        if not user.email_verified:
+            print("Email NON verificata!!")
+            return jsonify({
+                "message": "Email not verified"
+            }), 403
+        else:
+            print("Email verificata!!")
+
+        user_doc = db.collection('osteoarthritiis-db').document(uid).get()
+
+        if not user_doc.exists:
+            return jsonify({"error": "User data not found in Firestore"}), 404
+
+        user_data = user_doc.to_dict()
+
+        attempts_left = user_data.get('loginAttemptsLeft', 0)
+
+        # Aggiungo attributi di autenticazione a quelli della collezione su firestore
+        user_data['uid'] = user.uid
+        user_data['email'] = user.email
+        user_data['attemptsLeft'] = attempts_left
 
         return jsonify({
             "message": "Login successful",
-            "email": user.email,
-            "doctorId": user_data.get('doctorID'),  # Recupera il doctorID
-            "role": user_data.get('role')  # Recupera il role
+            "user": user_data,  
         }), 200
 
     except firebase_admin.auth.InvalidIdTokenError as e:
@@ -167,6 +185,45 @@ def login():
     except Exception as e:
         print("Errore nel login:", str(e))  # Stampa l'errore generico
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
+
+
+
+@app.route('/decrement-attempts', methods=['POST'])
+def decrement_attempts():
+    data = request.json
+    email = data.get('email')  
+
+    print("Email ricevuta: " + email)
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    # Recupera il documento dell'utente da Firestore cercando per email
+    user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
+
+    user_data = None
+    for user_doc in user_query:
+        user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
+        uid = user_doc.id  # Ottieni l'ID del documento
+        print("Uid trovato: " + uid)
+
+    if user_data is None:
+        print("Non trovo nessun utente")
+        return jsonify({"error": "User not found"}), 404
+
+    # Decrementa i tentativi
+    attempts_left = user_data.get('loginAttemptsLeft', 0)
+
+    print("Tentativi letti: " + str(attempts_left))
+
+    if attempts_left > 0:
+        db.collection('osteoarthritiis-db').document(uid).update({
+            'loginAttemptsLeft': attempts_left - 1
+        })
+        attempts_left -= 1  # Decrementa il valore per la risposta
+
+    return jsonify({"message": "Attempts decremented", "loginAttemptsLeft": attempts_left}), 200
 
 
 
@@ -296,10 +353,6 @@ def upload_file_to_gcs(file, patient_id):
     return blob.public_url
 
 
-
-
-
-
 @app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
 def upload_radiograph(patient_id):
     print("Ricevuta richiesta di caricamento radiografia")  # Debug
@@ -334,6 +387,75 @@ def upload_radiograph(patient_id):
         return jsonify({"error": str(e)}), 500
 
 
+
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.preprocessing import image
+import io
+
+# Ricrea il modello usato durante il training
+img_shape = (224, 224, 3)
+
+base_model = tf.keras.applications.ResNet50(
+    input_shape=img_shape,
+    include_top=False,
+    weights=None  # Non caricare i pesi pre-addestrati di ImageNet, poiché caricherai i tuoi pesi
+)
+
+# Rendi i layer del modello base addestrabili (come nel tuo codice di training)
+for layer in base_model.layers:
+    layer.trainable = True
+
+# Ricrea la parte superiore del modello
+model = tf.keras.models.Sequential([
+    base_model,
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Dense(5, activation='softmax')  # Assumendo che tu abbia 5 classi
+])
+
+model.load_weights(r"C:\Users\Utente\Downloads\weights_epoch_89.weights.h5")
+
+
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+
+    # Carica l'immagine direttamente dalla memoria
+    img = image.load_img(io.BytesIO(file.read()), target_size=(224, 224))
+
+    # Prepara l'immagine per la predizione
+    img_array = image.img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)  # Aggiungi dimensione batch
+    img_array /= 255.0  # Normalizza l'immagine
+
+    # Fai la predizione
+    predictions = model.predict(img_array)
+
+    # Trova la classe con la massima probabilità
+    predicted_class = np.argmax(predictions[0])  
+    confidence = float(np.max(predictions[0]))  # Fiducia nella previsione
+
+    # Mappa personalizzata per le tue 5 classi
+    class_labels = {
+        0: 'Classe 1: Normale',
+        1: 'Classe 2: Lieve osteoartrite',
+        2: 'Classe 3: Moderata osteoartrite',
+        3: 'Classe 4: Grave osteoartrite',
+        4: 'Classe 5: Avanzata osteoartrite'
+    }
+
+    # Gestisci i casi in cui predicted_class non è in class_labels (non necessario in questo caso, ma per sicurezza)
+    predicted_label = class_labels.get(predicted_class, 'Unknown class')
+
+    return jsonify({
+        'predicted_class': predicted_label,
+        'confidence': confidence  # Restituisce anche la fiducia della previsione
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

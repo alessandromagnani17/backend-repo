@@ -13,6 +13,12 @@ from email.mime.multipart import MIMEMultipart
 from google.cloud import storage
 from google.oauth2 import service_account 
 
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.preprocessing import image
+import io
+
+
 
 load_dotenv()
 
@@ -36,6 +42,40 @@ db = firestore.client()
 
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
+
+
+
+
+# Model Prediction 
+# Ricrea il modello usato durante il training
+img_shape = (224, 224, 3)
+
+base_model = tf.keras.applications.ResNet50(
+    input_shape=img_shape,
+    include_top=False,
+    weights=None  # Non caricare i pesi pre-addestrati di ImageNet, poiché caricherai i tuoi pesi
+)
+
+# Rendi i layer del modello base addestrabili (come nel tuo codice di training)
+for layer in base_model.layers:
+    layer.trainable = True
+
+# Ricrea la parte superiore del modello
+model = tf.keras.models.Sequential([
+    base_model,
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Dense(5, activation='softmax')  # Assumendo che tu abbia 5 classi
+])
+
+#model_weights_path = os.path.join(basedir, 'model-weights', 'resnet50-multiclassification.weights.h5')
+model_weights_path = "/Users/alessandromagnani/Desktop/resnet50-multiclassification.weights.h5"
+model.load_weights(model_weights_path)
+
+
+
+
+
 
 
 @app.route('/')
@@ -272,6 +312,7 @@ def get_patients():
 @app.route('/api/<doctor_id>/patients', methods=['GET'])
 def get_patients_from_doctor(doctor_id):
     try:
+        print("SONO DENTRO GETPATIENTFROMdoctor")
         print(f"Richiesta ricevuta per Doctor ID: {doctor_id}")  # Debug
         # Recupera tutti i pazienti associati al dottore corrente in Firestore
         patients_ref = db.collection('osteoarthritiis-db').where('DoctorRef', '==', doctor_id).stream()
@@ -387,37 +428,6 @@ def upload_radiograph(patient_id):
         return jsonify({"error": str(e)}), 500
 
 
-
-import tensorflow as tf
-import numpy as np
-from tensorflow.keras.preprocessing import image
-import io
-
-# Ricrea il modello usato durante il training
-img_shape = (224, 224, 3)
-
-base_model = tf.keras.applications.ResNet50(
-    input_shape=img_shape,
-    include_top=False,
-    weights=None  # Non caricare i pesi pre-addestrati di ImageNet, poiché caricherai i tuoi pesi
-)
-
-# Rendi i layer del modello base addestrabili (come nel tuo codice di training)
-for layer in base_model.layers:
-    layer.trainable = True
-
-# Ricrea la parte superiore del modello
-model = tf.keras.models.Sequential([
-    base_model,
-    tf.keras.layers.GlobalAveragePooling2D(),
-    tf.keras.layers.Dropout(0.2),
-    tf.keras.layers.Dense(5, activation='softmax')  # Assumendo che tu abbia 5 classi
-])
-
-model.load_weights(r"C:\Users\Utente\Downloads\weights_epoch_89.weights.h5")
-
-
-
 @app.route('/predict', methods=['POST'])
 def predict():
     if 'file' not in request.files:
@@ -456,6 +466,8 @@ def predict():
         'predicted_class': predicted_label,
         'confidence': confidence  # Restituisce anche la fiducia della previsione
     })
+
+#NUOVO
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

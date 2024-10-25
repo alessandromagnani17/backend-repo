@@ -12,12 +12,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from google.cloud import storage
 from google.oauth2 import service_account 
-
+import cv2
 import tensorflow as tf
 import numpy as np
 from tensorflow.keras.preprocessing import image
 import io
-
+from tensorflow.keras.models import load_model
 
 
 load_dotenv()
@@ -43,34 +43,9 @@ db = firestore.client()
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
 
+model_path = r"C:\Users\Utente\Downloads\pesi.h5"
 
-
-
-# Model Prediction 
-# Ricrea il modello usato durante il training
-img_shape = (224, 224, 3)
-
-base_model = tf.keras.applications.ResNet50(
-    input_shape=img_shape,
-    include_top=False,
-    weights=None  # Non caricare i pesi pre-addestrati di ImageNet, poiché caricherai i tuoi pesi
-)
-
-# Rendi i layer del modello base addestrabili (come nel tuo codice di training)
-for layer in base_model.layers:
-    layer.trainable = True
-
-# Ricrea la parte superiore del modello
-model = tf.keras.models.Sequential([
-    base_model,
-    tf.keras.layers.GlobalAveragePooling2D(),
-    tf.keras.layers.Dropout(0.2),
-    tf.keras.layers.Dense(5, activation='softmax')  # Assumendo che tu abbia 5 classi
-])
-
-#model_weights_path = os.path.join(basedir, 'model-weights', 'resnet50-multiclassification.weights.h5')
-model_weights_path = "/Users/alessandromagnani/Desktop/resnet50-multiclassification.weights.h5"
-model.load_weights(model_weights_path)
+model = load_model(model_path)
 
 
 
@@ -427,47 +402,56 @@ def upload_radiograph(patient_id):
         print(f"Errore durante l'upload: {str(e)}")  # Stampa l'errore
         return jsonify({"error": str(e)}), 500
 
-
 @app.route('/predict', methods=['POST'])
 def predict():
     if 'file' not in request.files:
+        print("Debug: Nessun file trovato nella richiesta.")
         return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
 
-    # Carica l'immagine direttamente dalla memoria
-    img = image.load_img(io.BytesIO(file.read()), target_size=(224, 224))
+    try:
+        img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
+        print("Debug: Immagine caricata correttamente.")
 
-    # Prepara l'immagine per la predizione
-    img_array = image.img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)  # Aggiungi dimensione batch
-    img_array /= 255.0  # Normalizza l'immagine
+        crop_area = (0, 224, 60, 180)
+        cropped_img = img[crop_area[2]:crop_area[3], crop_area[0]:crop_area[1]]
+        equalized_img = cv2.equalizeHist(cropped_img)
+        print("Debug: Immagine equalizzata e ritagliata.")
 
-    # Fai la predizione
-    predictions = model.predict(img_array)
+        img_rgb = cv2.cvtColor(equalized_img, cv2.COLOR_GRAY2RGB)
+        img_resized = cv2.resize(img_rgb, (224, 224))
+        img_array = tf.keras.utils.img_to_array(img_resized)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
 
-    # Trova la classe con la massima probabilità
-    predicted_class = np.argmax(predictions[0])  
-    confidence = float(np.max(predictions[0]))  # Fiducia nella previsione
+        predictions = model.predict(img_array)
+        print(f"Debug: Predizione effettuata - Output: {predictions}")
 
-    # Mappa personalizzata per le tue 5 classi
-    class_labels = {
-        0: 'Classe 1: Normale',
-        1: 'Classe 2: Lieve osteoartrite',
-        2: 'Classe 3: Moderata osteoartrite',
-        3: 'Classe 4: Grave osteoartrite',
-        4: 'Classe 5: Avanzata osteoartrite'
-    }
+        predicted_class = np.argmax(predictions[0])
+        confidence = float(np.max(predictions[0]))
+        print(f"Debug: Classe predetta - {predicted_class}, Confidenza: {confidence}")
 
-    # Gestisci i casi in cui predicted_class non è in class_labels (non necessario in questo caso, ma per sicurezza)
-    predicted_label = class_labels.get(predicted_class, 'Unknown class')
+        class_labels = {
+            0: 'Classe 1: Normale',
+            1: 'Classe 2: Lieve osteoartrite',
+            2: 'Classe 3: Moderata osteoartrite',
+            3: 'Classe 4: Grave osteoartrite',
+            4: 'Classe 5: Avanzata osteoartrite'
+        }
+        predicted_label = class_labels.get(predicted_class, 'Unknown class')
 
-    return jsonify({
-        'predicted_class': predicted_label,
-        'confidence': confidence  # Restituisce anche la fiducia della previsione
-    })
+        return jsonify({
+            'predicted_class': predicted_label,
+            'confidence': confidence
+        })
 
-#NUOVO
+    except Exception as e:
+        print(f"Debug: Errore durante la predizione - {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

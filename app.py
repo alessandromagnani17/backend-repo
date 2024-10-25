@@ -373,8 +373,6 @@ def get_radiographs(patient_id):
         print("Errore nel recupero delle radiografie:", str(e))
         return jsonify({"error": str(e)}), 500
 
-    
-
 
 
 def get_gcs_bucket():
@@ -513,6 +511,9 @@ def download_radiograph():
     except Exception as e:
         print(f"Errore durante il download della radiografia: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+
+
 
 
 @app.route('/predict', methods=['POST'])

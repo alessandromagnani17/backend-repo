@@ -357,19 +357,22 @@ def verify_email(uid):
 @app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
 def get_radiographs(patient_id):
     try:
+        print("Patient ID ricevuto dal frontend:", patient_id)  # Debug per verificare il patientId
+
         # Recupera le radiografie per il paziente specificato
-        # Supponendo che tu abbia una collezione "radiographs" nel tuo database Firestore
         radiographs_ref = db.collection('radiographs').where('patientId', '==', patient_id).stream()
 
         radiographs = []
         for radiograph in radiographs_ref:
             radiographs.append(radiograph.to_dict())
 
+        print("Radiografie trovate nel backend:", radiographs)  # Debug per verificare le radiografie trovate
         return jsonify(radiographs), 200
     
     except Exception as e:
         print("Errore nel recupero delle radiografie:", str(e))
         return jsonify({"error": str(e)}), 500
+
     
 
 

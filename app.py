@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, send_file, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
@@ -17,6 +17,7 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.keras.preprocessing import image
 import io
+import requests
 
 
 
@@ -372,16 +373,22 @@ def get_radiographs(patient_id):
     
 
 
+
+def get_gcs_bucket():
+    """Ottiene il bucket di Google Cloud Storage."""
+    storage_client = storage.Client()
+    bucket_name = 'osteoarthritis-radiographs-archive'
+    return storage_client.bucket(bucket_name)
+
+
+
+
 def upload_file_to_gcs(file, patient_id):
     """Funzione per caricare file su Google Cloud Storage."""
     print(f"File ricevuto: {file.filename}, Tipo: {file.content_type}")  # Debug
 
-    # Crea un client per Google Cloud Storage
-    storage_client = storage.Client()
-    
-    # Nome del bucket su Google Cloud Storage
-    bucket_name = 'osteoarthritis-radiographs-archive'
-    bucket = storage_client.bucket(bucket_name)
+    # Ottieni il bucket
+    bucket = get_gcs_bucket()
     
     # Definisci il nome del file all'interno del bucket
     blob = bucket.blob(f"{patient_id}/{file.filename}")
@@ -392,6 +399,7 @@ def upload_file_to_gcs(file, patient_id):
     # Restituisci l'URL pubblico del file
     blob.make_public()
     return blob.public_url
+
 
 
 @app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
@@ -425,6 +433,71 @@ def upload_radiograph(patient_id):
 
     except Exception as e:
         print(f"Errore durante l'upload: {str(e)}")  # Stampa l'errore
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route('/api/patients/<patient_id>/radiographs', methods=['GET'])
+def get_patient_radiographs(patient_id):
+    try:
+        # Ottieni il bucket
+        bucket = get_gcs_bucket()
+
+        # Elenco di radiografie associate all'ID del paziente
+        blobs = bucket.list_blobs(prefix=f"{patient_id}/")
+
+        # Crea una lista di URL delle radiografie
+        radiographs = []
+        for blob in blobs:
+            radiographs.append({
+                "url": blob.public_url,  # Usa l'URL pubblico
+                "name": blob.name,
+                "date": blob.time_created.strftime("%Y-%m-%d")  # Data di creazione del file
+            })
+
+        return jsonify(radiographs), 200
+
+    except Exception as e:
+        print(f"Errore durante il recupero delle radiografie: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+
+
+
+
+@app.route('/api/download-radiograph', methods=['GET'])
+def download_radiograph():
+    try:
+        # Recupera l'URL del file dai parametri della richiesta
+        file_url = request.args.get('url')
+        filename = request.args.get('filename', 'radiograph.png')
+
+        if not file_url:
+            return jsonify({"error": "File URL is missing"}), 400
+
+        # Log URL being fetched
+        print(f"Fetching radiograph from URL: {file_url}")
+
+        # Scarica il file dall'URL pubblico di Google Cloud Storage
+        response = requests.get(file_url)
+
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to fetch radiograph"}), 500
+
+        # Leggi il file e prepara il buffer per l'invio
+        file_stream = io.BytesIO(response.content)
+
+        # Invia il file al client con il nome specificato
+        return send_file(
+            file_stream,
+            mimetype='image/png',  # Imposta il MIME type corretto per PNG
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print(f"Errore durante il download della radiografia: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 

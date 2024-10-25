@@ -1,4 +1,4 @@
 .env
-venv/
+myenv/
 config/firebase-adminsdk.json
 config/meta-geography-438711-r1-de4779cd8c73.json

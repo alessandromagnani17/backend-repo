@@ -45,7 +45,7 @@ db = firestore.client()
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
 
-model_path = r"C:\Users\Utente\Downloads\pesi.h5"
+model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
 
 model = load_model(model_path)
 
@@ -289,7 +289,6 @@ def get_patients():
 @app.route('/api/<doctor_id>/patients', methods=['GET'])
 def get_patients_from_doctor(doctor_id):
     try:
-        print("SONO DENTRO GETPATIENTFROMdoctor")
         print(f"Richiesta ricevuta per Doctor ID: {doctor_id}")  # Debug
         # Recupera tutti i pazienti associati al dottore corrente in Firestore
         patients_ref = db.collection('osteoarthritiis-db').where('DoctorRef', '==', doctor_id).stream()
@@ -300,7 +299,6 @@ def get_patients_from_doctor(doctor_id):
             patients.append(patient_data)
             print(f"Paziente recuperato per il dottore {doctor_id}: {patient_data}")
 
-        print("patients: ", patients)  # Stampa la lista dei pazienti
         # Restituisci la lista dei pazienti come risposta JSON
         return jsonify(patients), 200
 

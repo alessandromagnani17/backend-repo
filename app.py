@@ -448,18 +448,29 @@ def get_patient_radiographs(patient_id):
 
         # Crea una lista di URL delle radiografie
         radiographs = []
+        
         for blob in blobs:
-            radiographs.append({
-                "url": blob.public_url,  # Usa l'URL pubblico
-                "name": blob.name,
-                "date": blob.time_created.strftime("%Y-%m-%d")  # Data di creazione del file
-            })
+            # Verifica che l'URL pubblico sia accessibile prima di aggiungerlo alla lista
+            try:
+                response = requests.head(blob.public_url)
+                if response.status_code == 200:
+                    radiographs.append({
+                        "url": blob.public_url,
+                        "name": blob.name,
+                        "date": blob.time_created.strftime("%Y-%m-%d")
+                    })
+                else:
+                    print(f"File non accessibile: {blob.name}")
+            except Exception as e:
+                print(f"Errore di accesso per il blob {blob.name}: {e}")
 
+        # Restituisci l'elenco delle radiografie come JSON
         return jsonify(radiographs), 200
 
     except Exception as e:
         print(f"Errore durante il recupero delle radiografie: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
 
 
 

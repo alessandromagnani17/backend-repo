@@ -45,7 +45,7 @@ db = firestore.client()
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
 
-model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
+model_path = r"C:/Users/Utente/Downloads/pesi.h5"
 
 model = load_model(model_path)
 
@@ -122,7 +122,7 @@ def register():
             "cap_code": data['cap_code'],
             "tax_code": data['tax_code'],
             "role": data['role'],
-            "loginAttemptsLeft": 5
+            "loginAttemptsLeft": 6
         }
 
         # Se l'utente è un dottore, aggiungi anche il doctorID
@@ -209,7 +209,7 @@ def login():
 @app.route('/decrement-attempts', methods=['POST'])
 def decrement_attempts():
     data = request.json
-    email = data.get('email')  
+    email = data.get('email')
 
     print("Email ricevuta: " + email)
 
@@ -220,6 +220,7 @@ def decrement_attempts():
     user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
 
     user_data = None
+    uid = None
     for user_doc in user_query:
         user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
         uid = user_doc.id  # Ottieni l'ID del documento
@@ -228,6 +229,13 @@ def decrement_attempts():
     if user_data is None:
         print("Non trovo nessun utente")
         return jsonify({"error": "User not found"}), 404
+
+    # Controlla se l'email è verificata
+    if not user_data.get('emailVerified', False):
+        print("Non decremento.. email non verificata")
+        return jsonify({"message": "La tua email non è stata verificata. Verifica la tua email prima di accedere."}), 200
+    else:
+        print("Email verificata, decremento")
 
     # Decrementa i tentativi
     attempts_left = user_data.get('loginAttemptsLeft', 0)
@@ -241,6 +249,7 @@ def decrement_attempts():
         attempts_left -= 1  # Decrementa il valore per la risposta
 
     return jsonify({"message": "Attempts decremented", "loginAttemptsLeft": attempts_left}), 200
+
 
 
 

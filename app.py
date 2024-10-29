@@ -385,7 +385,6 @@ def upload_file_to_gcs(file, patient_id):
     return blob.public_url
 
 
-
 @app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
 def upload_radiograph(patient_id):
     print("Ricevuta richiesta di caricamento radiografia")  # Debug

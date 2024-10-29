@@ -525,27 +525,79 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
     return heatmap.numpy()
 
-def make_gradcam(heatmap, original_img, alpha=0.4):
-    # Ridimensiona la heatmap alle dimensioni dell'immagine originale
-    heatmap = cv2.resize(heatmap, (original_img.shape[1], original_img.shape[0]))
+def preprocess_image(file):
+    img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
+    equalized_img = cv2.equalizeHist(img)
+    img_rgb = cv2.cvtColor(equalized_img, cv2.COLOR_GRAY2RGB)
+    img_array = tf.keras.utils.img_to_array(img_rgb)
+    img_array = np.expand_dims(img_array, axis=0)
+    img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
+    return img_array, img_rgb
+
+def predict_class(img_array, model):
+    predictions = model.predict(img_array)
+    predicted_class = np.argmax(predictions[0])
+    confidence = float(np.max(predictions[0]))
+    return predicted_class, confidence
+
+def generate_gradcam(img_array, model, predicted_class, img_rgb):
+    heatmap = make_gradcam_heatmap(img_array, model, "conv5_block3_out", pred_index=predicted_class)
+    heatmap = np.uint8(255 * heatmap)  # Normalizza la heatmap
+    heatmap = cv2.resize(heatmap, (img_rgb.shape[1], img_rgb.shape[0]))  # Ridimensiona
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)  # Applica una mappa di colore
+    superimposed_img = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)  # Sovrapponi la heatmap
+    return superimposed_img
+
+def save_and_upload_gradcam_image(superimposed_img, user_uid):
+    gradcam_file = io.BytesIO()
+    _, buffer = cv2.imencode('.png', superimposed_img)
+    gradcam_file.write(buffer)
+    gradcam_file.seek(0)  # Torna all'inizio del buffer
+
+    # Carica l'immagine Grad-CAM su Google Cloud Storage
+    gradcam_url = upload_file_to_gcs1(gradcam_file, f"{user_uid}/Radiografia1", "gradcam.png")
+    return gradcam_url
+
+def upload_file_to_gcs1(file, path, name, content_type=None):
+    """Funzione per caricare file su Google Cloud Storage."""
+
+    # Ottieni il bucket
+    bucket = get_gcs_bucket()
+    blob = bucket.blob(f"{path}/{name}")
+
+    # Carica il file
+    blob.upload_from_file(file, content_type=content_type, rewind=True)
+
+    # Restituisci l'URL pubblico del file
+    blob.make_public()
+    return blob.public_url
+
+def count_existing_folders(user_uid):
+    bucket = get_gcs_bucket()
     
-    # Converti la heatmap in colori RGB
-    heatmap = np.uint8(255 * heatmap)
-    jet = plt.get_cmap("jet")
-    jet_colors = jet(np.arange(256))[:, :3]
-    jet_heatmap = jet_colors[heatmap]
+    print("Stampo tutto il contenuto del bucket:")
+    all_blobs = bucket.list_blobs(prefix=f'{user_uid}/')
 
-    # Sovrapposizione tra l'immagine originale e la heatmap
-    superimposed_img = jet_heatmap * alpha + np.expand_dims(original_img, axis=-1)
-    superimposed_img = np.uint8(superimposed_img)
+    found_folders = set()
 
-    # Salva l'immagine in un oggetto BytesIO
-    gradcam_image = io.BytesIO()
-    is_success, buffer = cv2.imencode(".png", superimposed_img)
-    gradcam_image.write(buffer.tobytes())
-    gradcam_image.seek(0)
+    for blob in all_blobs:
+        # Aggiungi solo il prefisso (cartella) senza il file
+        folder_name = '/'.join(blob.name.split('/')[:-1])
+        found_folders.add(folder_name)
 
-    return gradcam_image
+        print(f"Blob trovato: {blob.name}")
+
+    print("Stampo cartelle inizio")
+    if not found_folders:
+        print("Nessuna cartella trovata.")
+    else:
+        for folder in found_folders:
+            print(f"Cartella trovata: {folder}")
+    print("Stampo cartelle fine")
+
+    return len(found_folders)
+
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -557,40 +609,25 @@ def predict():
     user_uid = request.form.get('userUID')
 
     try:
-        img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
-        original_image_url = upload_file_to_gcs1(file, f"{user_uid}/Radiografia1", "original_image.png")
+        # AGGIUNGI TENDINA PAZIENTI
+        num_folder = count_existing_folders(user_uid)
+        if num_folder != 0:
+            print(f"Debug: L'utente {user_uid} ha già caricato {num_folder} radiografie.")
+        else:
+            print(f"Debug: Nessuna radiografia trovata per l'utente {user_uid}.")
+        img_array, img_rgb = preprocess_image(file)
+        original_image_url = upload_file_to_gcs1(file, f"{user_uid}/Radiografia{num_folder + 1}", "original_image.png")
 
         print("Debug: Immagine caricata correttamente.")
 
-        equalized_img = cv2.equalizeHist(img)
-        img_rgb = cv2.cvtColor(equalized_img, cv2.COLOR_GRAY2RGB)
-        img_array = tf.keras.utils.img_to_array(img_rgb)
-        img_array = np.expand_dims(img_array, axis=0)
-        img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
-
-        predictions = model.predict(img_array)
-        print(f"Debug: Predizione effettuata - Output: {predictions}")
-
-        predicted_class = np.argmax(predictions[0])
-        confidence = float(np.max(predictions[0]))
+        predicted_class, confidence = predict_class(img_array, model)
         print(f"Debug: Classe predetta - {predicted_class}, Confidenza: {confidence}")
 
-        # Aggiungi la generazione della mappa Grad-CAM
-        heatmap = make_gradcam_heatmap(img_array, model, "conv5_block3_out", pred_index=predicted_class)
-        heatmap = np.uint8(255 * heatmap)  # Normalizza la heatmap
-        heatmap = cv2.resize(heatmap, (img_rgb.shape[1], img_rgb.shape[0]))  # Ridimensiona alla dimensione dell'immagine
-        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)  # Applica una mappa di colore
-        superimposed_img = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)  # Sovrapponi la heatmap all'immagine originale
-        
-        # Salva l'immagine con la Grad-CAM
-        gradcam_path = "C:/Users/Utente/Desktop/gradcam_image.png"  # Specifica il percorso dove salvare
-        cv2.imwrite(gradcam_path, superimposed_img)
+        # Genera l'immagine Grad-CAM
+        superimposed_img = generate_gradcam(img_array, model, predicted_class, img_rgb)
 
-        _, buffer = cv2.imencode('.png', superimposed_img)
-        gradcam_file = io.BytesIO(buffer)
-
-        # Carica l'immagine Grad-CAM su Google Cloud Storage
-        gradcam_url = upload_file_to_gcs1(gradcam_file, f"{user_uid}/Radiografia1", "gradcam.png")
+        # Salva e carica l'immagine Grad-CAM
+        gradcam_url = save_and_upload_gradcam_image(superimposed_img, user_uid)
 
         class_labels = {
             0: 'Classe 1: Normale',
@@ -611,30 +648,6 @@ def predict():
     except Exception as e:
         print(f"Debug: Errore durante la predizione - {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-
-
-# DEVI SALVARE LA GRADCAM BENE SU STORAGE PERCHE LA SALVA MALE
-
-
-def upload_file_to_gcs1(file, path, name, content_type=None):
-    """Funzione per caricare file su Google Cloud Storage."""
-    print(f"File ricevuto: {getattr(file, 'filename', 'file-like object')}, Tipo: {content_type}")  # Debug
-
-    # Ottieni il bucket
-    bucket = get_gcs_bucket()
-
-    # Definisci il nome del file all'interno del bucket
-    print("Scrivo .. riga sotto ...")
-    print(f"{path}/{name}")
-    blob = bucket.blob(f"{path}/{name}")
-
-    # Carica il file
-    blob.upload_from_file(file, content_type=content_type, rewind=True)
-
-    # Restituisci l'URL pubblico del file
-    blob.make_public()
-    return blob.public_url
 
 
 @app.route('/images/<path:image_name>', methods=['GET'])

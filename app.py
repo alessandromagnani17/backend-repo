@@ -46,7 +46,7 @@ db = firestore.client()
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
 
-model_path = r"C:/Users/Utente/Downloads/pesi.h5"
+model_path = r"model/model.h5"
 
 model = load_model(model_path)
 

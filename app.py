@@ -19,6 +19,7 @@ from tensorflow.keras.preprocessing import image
 import io
 import requests
 from tensorflow.keras.models import load_model
+import matplotlib.pyplot as plt
 
 
 
@@ -386,6 +387,8 @@ def upload_file_to_gcs(file, patient_id):
 
 
 
+
+
 @app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
 def upload_radiograph(patient_id):
     print("Ricevuta richiesta di caricamento radiografia")  # Debug
@@ -496,7 +499,53 @@ def download_radiograph():
         return jsonify({"error": str(e)}), 500
 
 
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    resnet_model = model.get_layer('resnet50')
+    last_conv_layer = resnet_model.get_layer(last_conv_layer_name)
+    last_conv_layer_model = tf.keras.models.Model(resnet_model.input, last_conv_layer.output)
+    classifier_input = tf.keras.layers.Input(shape=last_conv_layer.output.shape[1:])
+    x = classifier_input
+    for layer in model.layers[1:]:
+        x = layer(x)
+    classifier_model = tf.keras.models.Model(classifier_input, x)
 
+    with tf.GradientTape() as tape:
+        last_conv_layer_output = last_conv_layer_model(img_array)
+        tape.watch(last_conv_layer_output)
+        preds = classifier_model(last_conv_layer_output)
+        if pred_index is None:
+            pred_index = tf.argmax(preds[0])
+        class_channel = preds[:, pred_index]
+
+    grads = tape.gradient(class_channel, last_conv_layer_output)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    last_conv_layer_output = last_conv_layer_output[0]
+    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    return heatmap.numpy()
+
+def make_gradcam(heatmap, original_img, alpha=0.4):
+    # Ridimensiona la heatmap alle dimensioni dell'immagine originale
+    heatmap = cv2.resize(heatmap, (original_img.shape[1], original_img.shape[0]))
+    
+    # Converti la heatmap in colori RGB
+    heatmap = np.uint8(255 * heatmap)
+    jet = plt.get_cmap("jet")
+    jet_colors = jet(np.arange(256))[:, :3]
+    jet_heatmap = jet_colors[heatmap]
+
+    # Sovrapposizione tra l'immagine originale e la heatmap
+    superimposed_img = jet_heatmap * alpha + np.expand_dims(original_img, axis=-1)
+    superimposed_img = np.uint8(superimposed_img)
+
+    # Salva l'immagine in un oggetto BytesIO
+    gradcam_image = io.BytesIO()
+    is_success, buffer = cv2.imencode(".png", superimposed_img)
+    gradcam_image.write(buffer.tobytes())
+    gradcam_image.seek(0)
+
+    return gradcam_image
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -505,19 +554,17 @@ def predict():
         return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
+    user_uid = request.form.get('userUID')
 
     try:
         img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
+        original_image_url = upload_file_to_gcs1(file, f"{user_uid}/Radiografia1", "original_image.png")
+
         print("Debug: Immagine caricata correttamente.")
 
-        crop_area = (0, 224, 60, 180)
-        cropped_img = img[crop_area[2]:crop_area[3], crop_area[0]:crop_area[1]]
-        equalized_img = cv2.equalizeHist(cropped_img)
-        print("Debug: Immagine equalizzata e ritagliata.")
-
+        equalized_img = cv2.equalizeHist(img)
         img_rgb = cv2.cvtColor(equalized_img, cv2.COLOR_GRAY2RGB)
-        img_resized = cv2.resize(img_rgb, (224, 224))
-        img_array = tf.keras.utils.img_to_array(img_resized)
+        img_array = tf.keras.utils.img_to_array(img_rgb)
         img_array = np.expand_dims(img_array, axis=0)
         img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
 
@@ -527,6 +574,23 @@ def predict():
         predicted_class = np.argmax(predictions[0])
         confidence = float(np.max(predictions[0]))
         print(f"Debug: Classe predetta - {predicted_class}, Confidenza: {confidence}")
+
+        # Aggiungi la generazione della mappa Grad-CAM
+        heatmap = make_gradcam_heatmap(img_array, model, "conv5_block3_out", pred_index=predicted_class)
+        heatmap = np.uint8(255 * heatmap)  # Normalizza la heatmap
+        heatmap = cv2.resize(heatmap, (img_rgb.shape[1], img_rgb.shape[0]))  # Ridimensiona alla dimensione dell'immagine
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)  # Applica una mappa di colore
+        superimposed_img = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)  # Sovrapponi la heatmap all'immagine originale
+        
+        # Salva l'immagine con la Grad-CAM
+        gradcam_path = "C:/Users/Utente/Desktop/gradcam_image.png"  # Specifica il percorso dove salvare
+        cv2.imwrite(gradcam_path, superimposed_img)
+
+        _, buffer = cv2.imencode('.png', superimposed_img)
+        gradcam_file = io.BytesIO(buffer)
+
+        # Carica l'immagine Grad-CAM su Google Cloud Storage
+        gradcam_url = upload_file_to_gcs1(gradcam_file, f"{user_uid}/Radiografia1", "gradcam.png")
 
         class_labels = {
             0: 'Classe 1: Normale',
@@ -539,12 +603,57 @@ def predict():
 
         return jsonify({
             'predicted_class': predicted_label,
-            'confidence': confidence
+            'confidence': confidence,
+            'original_image': original_image_url,
+            'gradcam_image': gradcam_url  
         })
 
     except Exception as e:
         print(f"Debug: Errore durante la predizione - {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+
+# DEVI SALVARE LA GRADCAM BENE SU STORAGE PERCHE LA SALVA MALE
+
+
+def upload_file_to_gcs1(file, path, name, content_type=None):
+    """Funzione per caricare file su Google Cloud Storage."""
+    print(f"File ricevuto: {getattr(file, 'filename', 'file-like object')}, Tipo: {content_type}")  # Debug
+
+    # Ottieni il bucket
+    bucket = get_gcs_bucket()
+
+    # Definisci il nome del file all'interno del bucket
+    print("Scrivo .. riga sotto ...")
+    print(f"{path}/{name}")
+    blob = bucket.blob(f"{path}/{name}")
+
+    # Carica il file
+    blob.upload_from_file(file, content_type=content_type, rewind=True)
+
+    # Restituisci l'URL pubblico del file
+    blob.make_public()
+    return blob.public_url
+
+
+@app.route('/images/<path:image_name>', methods=['GET'])
+def get_image(image_name):
+    try:
+        bucket = get_gcs_bucket()
+        blob = bucket.blob(image_name)
+
+        # Scarica il contenuto dell'immagine come bytes
+        image_data = blob.download_as_bytes()
+
+        # Crea un oggetto file in memoria per l'immagine
+        image_stream = io.BytesIO(image_data)
+
+        # Invia l'immagine come file di risposta
+        return send_file(image_stream, mimetype='image/png')  # Specifica il mimetype corretto se diverso
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

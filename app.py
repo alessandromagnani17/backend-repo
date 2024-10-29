@@ -204,6 +204,32 @@ def login():
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
+@app.route('/get_user/<user_id>', methods=['GET'])
+def get_user(user_id):
+    user_ref = db.collection('osteoarthritiis-db').document(user_id)
+    user_data = user_ref.get()
+    if user_data.exists:
+        return jsonify(user_data.to_dict()), 200
+    else:
+        return jsonify({"error": "User not found"}), 404
+
+
+
+
+@app.route('/update_user', methods=['PATCH'])
+def update_user():
+    data = request.json
+    user_id = data.get('userId')  # Ottieni l'ID utente dal payload
+    updates = {key: value for key, value in data.items() if key != 'userId'}  # Filtro per escludere l'ID utente
+
+    try:
+        user_ref = db.collection('osteoarthritiis-db').document(user_id)
+        user_ref.update(updates)  # Aggiorna i dati nel database
+
+        return jsonify({"message": "Dati aggiornati con successo!"}), 200
+    except Exception as e:
+        print("Errore nell'aggiornamento dei dati:", str(e))
+        return jsonify({"error": str(e), "message": "Errore durante l'aggiornamento dei dati."}), 400
 
 
 @app.route('/decrement-attempts', methods=['POST'])

@@ -205,6 +205,28 @@ def login():
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
+@app.route('/check-email-verification', methods=['POST'])
+def check_email_verification():
+    data = request.json
+    email = data.get('email')
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    try:
+        # Recupera l'utente da Firebase usando l'email
+        user = auth.get_user_by_email(email)
+
+        # Controlla se l'email è verificata
+        if user.email_verified:
+            return jsonify({"message": "Email verified"}), 200
+        else:
+            return jsonify({"message": "Email not verified"}), 200
+    except firebase_admin.auth.UserNotFoundError:
+        return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        print("Errore durante la verifica dell'email:", str(e))
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route('/decrement-attempts', methods=['POST'])
@@ -324,17 +346,22 @@ def verify_email(uid):
         return jsonify({"error": "Missing user ID"}), 400
     
     try:
-        # Verifica che l'utente esista su Firebase
+        # Recupera i dati dell'utente da Firebase
         user = auth.get_user(uid)
-        
+
+        # Controlla se l'email è già verificata
+        if user.email_verified:
+            return jsonify({"message": "Email già verificata!"}), 200
+
         # Imposta l'email come verificata
         auth.update_user(uid, email_verified=True)
-
+        
         return jsonify({"message": "Email verificata con successo!"}), 200
     except auth.UserNotFoundError:
         return jsonify({"error": "Utente non trovato"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 

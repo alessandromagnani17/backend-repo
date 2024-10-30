@@ -47,7 +47,11 @@ db = firestore.client()
 storage_client = storage.Client()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
+=======
+model_path = r"model/model.h5"
+>>>>>>> origin/zimon
 =======
 model_path = r"model/model.h5"
 >>>>>>> origin/zimon
@@ -209,7 +213,7 @@ def login():
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
-<<<<<<< HEAD
+
 @app.route('/get_user/<user_id>', methods=['GET'])
 def get_user(user_id):
     user_ref = db.collection('osteoarthritiis-db').document(user_id)
@@ -236,7 +240,8 @@ def update_user():
     except Exception as e:
         print("Errore nell'aggiornamento dei dati:", str(e))
         return jsonify({"error": str(e), "message": "Errore durante l'aggiornamento dei dati."}), 400
-=======
+
+
 @app.route('/check-email-verification', methods=['POST'])
 def check_email_verification():
     data = request.json
@@ -259,7 +264,6 @@ def check_email_verification():
     except Exception as e:
         print("Errore durante la verifica dell'email:", str(e))
         return jsonify({"error": "Internal server error"}), 500
->>>>>>> origin/zimon
 
 
 @app.route('/decrement-attempts', methods=['POST'])
@@ -446,12 +450,6 @@ def upload_file_to_gcs(file, patient_id):
     return blob.public_url
 
 
-<<<<<<< HEAD
-=======
-
-
-
->>>>>>> origin/zimon
 @app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
 def upload_radiograph(patient_id):
     print("Ricevuta richiesta di caricamento radiografia")  # Debug

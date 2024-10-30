@@ -46,15 +46,8 @@ db = firestore.client()
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
 
-<<<<<<< HEAD
-<<<<<<< HEAD
+
 model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
-=======
-model_path = r"model/model.h5"
->>>>>>> origin/zimon
-=======
-model_path = r"model/model.h5"
->>>>>>> origin/zimon
 
 model = load_model(model_path)
 

@@ -47,7 +47,7 @@ db = firestore.client()
 storage_client = storage.Client()
 
 
-model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
+model_path = r"C:/Users/Utente/Downloads/pesi.h5"
 
 model = load_model(model_path)
 
@@ -168,14 +168,6 @@ def login():
         user = auth.get_user(uid)
         print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
 
-        if not user.email_verified:
-            print("Email NON verificata!!")
-            return jsonify({
-                "message": "Email not verified"
-            }), 403
-        else:
-            print("Email verificata!!")
-
         user_doc = db.collection('osteoarthritiis-db').document(uid).get()
 
         if not user_doc.exists:
@@ -251,7 +243,7 @@ def check_email_verification():
         if user.email_verified:
             return jsonify({"message": "Email verified"}), 200
         else:
-            return jsonify({"message": "Email not verified"}), 200
+            return jsonify({"error": "La tua email non è stata verificata. Verifica la tua email prima di accedere."}), 403
     except firebase_admin.auth.UserNotFoundError:
         return jsonify({"error": "User not found"}), 404
     except Exception as e:
@@ -282,13 +274,6 @@ def decrement_attempts():
     if user_data is None:
         print("Non trovo nessun utente")
         return jsonify({"error": "User not found"}), 404
-
-    # Controlla se l'email è verificata
-    if not user_data.get('emailVerified', False):
-        print("Non decremento.. email non verificata")
-        return jsonify({"message": "La tua email non è stata verificata. Verifica la tua email prima di accedere."}), 200
-    else:
-        print("Email verificata, decremento")
 
     # Decrementa i tentativi
     attempts_left = user_data.get('loginAttemptsLeft', 0)

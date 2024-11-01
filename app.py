@@ -381,7 +381,7 @@ def verify_email(uid):
 
 
 @app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
-def get_radiographs(patient_id):
+def get_user_radiographs(patient_id):
     try:
         print("Patient ID ricevuto dal frontend:", patient_id)  # Debug per verificare il patientId
 
@@ -611,6 +611,69 @@ def upload_file_to_gcs1(file, path, name, content_type=None):
     blob.make_public()
     return blob.public_url
 
+def get_image_url(user_uid, folder_name, image_name):
+    """Restituisce l'URL di un'immagine nel bucket Google Cloud Storage."""
+    # Path dell'immagine
+    path = f"{user_uid}/{folder_name}/{image_name}"
+
+    # Ottieni il bucket
+    bucket = get_gcs_bucket()
+    blob = bucket.blob(path)
+
+    # Verifica se il blob esiste prima di renderlo pubblico
+    if blob.exists():
+        blob.make_public()
+        return blob.public_url
+    else:
+        print(f"Debug: Immagine {path} non trovata.")
+        return None
+
+def retrieve_prediction(user_uid, folder_name):
+    """Recupera la predizione salvata in formato testo o JSON per una specifica radiografia."""
+    # Path del file di predizione
+    prediction_file_path = f"{user_uid}/{folder_name}/prediction.txt"
+
+    # Ottieni il bucket
+    bucket = get_gcs_bucket()
+    blob = bucket.blob(prediction_file_path)
+
+    # Verifica l'esistenza del file di predizione e carica il contenuto
+    if blob.exists():
+        prediction_data = blob.download_as_text()
+        return prediction_data
+    else:
+        print(f"Debug: File di predizione non trovato in {prediction_file_path}.")
+        return "Predizione non disponibile"
+
+
+@app.route('/get_radiographs/<user_uid>', methods=['GET'])
+def get_radiographs(user_uid):
+    try:
+        radiographs = []
+        num_folders = count_existing_folders(user_uid)
+        if num_folders == 0:
+            return jsonify({'message': 'No radiographs found'}), 404
+
+        for i in range(1, num_folders + 1):
+            folder_name = f"{user_uid}/Radiografia{i}"
+            original_url = get_image_url(folder_name, "original_image.png")
+            gradcam_url = get_image_url(folder_name, "gradcam.png")
+
+            # Recupera la predizione e altre informazioni se sono state salvate
+            prediction = retrieve_prediction(user_uid, i)
+
+            radiographs.append({
+                'original_image': original_url,
+                'gradcam_image': gradcam_url,
+                'prediction': prediction
+            })
+
+        return jsonify(radiographs)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def count_existing_folders(user_uid):
     bucket = get_gcs_bucket()
     
@@ -635,8 +698,6 @@ def count_existing_folders(user_uid):
     print("Stampo cartelle fine")
 
     return len(found_folders)
-
-
 
 @app.route('/predict', methods=['POST'])
 def predict():

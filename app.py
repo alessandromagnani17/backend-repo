@@ -499,10 +499,6 @@ def get_patient_radiographs(patient_id):
 
 
 
-
-
-
-
 @app.route('/api/download-radiograph', methods=['GET'])
 def download_radiograph():
     try:
@@ -626,23 +622,6 @@ def get_image_url(user_uid, folder_name, image_name):
         print(f"Debug: Immagine {path} non trovata.")
         return None
 
-def retrieve_prediction(user_uid, folder_name):
-    """Recupera la predizione salvata in formato testo o JSON per una specifica radiografia."""
-    # Path del file di predizione
-    prediction_file_path = f"{user_uid}/{folder_name}/prediction.txt"
-
-    # Ottieni il bucket
-    bucket = get_gcs_bucket()
-    blob = bucket.blob(prediction_file_path)
-
-    # Verifica l'esistenza del file di predizione e carica il contenuto
-    if blob.exists():
-        prediction_data = blob.download_as_text()
-        return prediction_data
-    else:
-        print(f"Debug: File di predizione non trovato in {prediction_file_path}.")
-        return "Predizione non disponibile"
-
 
 @app.route('/get_radiographs/<user_uid>', methods=['GET'])
 def get_radiographs(user_uid):
@@ -653,17 +632,13 @@ def get_radiographs(user_uid):
             return jsonify({'message': 'No radiographs found'}), 404
 
         for i in range(1, num_folders + 1):
-            folder_name = f"{user_uid}/Radiografia{i}"
-            original_url = get_image_url(folder_name, "original_image.png")
-            gradcam_url = get_image_url(folder_name, "gradcam.png")
-
-            # Recupera la predizione e altre informazioni se sono state salvate
-            prediction = retrieve_prediction(user_uid, i)
+            folder_name = f"Radiografia{i}"
+            original_url = get_image_url(user_uid, folder_name, f"original_image{i}.png")
+            #gradcam_url = get_image_url(folder_name, "gradcam.png")
 
             radiographs.append({
                 'original_image': original_url,
-                'gradcam_image': gradcam_url,
-                'prediction': prediction
+                #'gradcam_image': gradcam_url,
             })
 
         return jsonify(radiographs)

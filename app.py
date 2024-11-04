@@ -587,15 +587,13 @@ def generate_gradcam(img_array, model, predicted_class, img_rgb):
     superimposed_img = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)  # Sovrapponi la heatmap
     return superimposed_img
 
-def save_and_upload_gradcam_image(superimposed_img, user_uid):
+def save_gradcam_image(superimposed_img, user_uid):
     gradcam_file = io.BytesIO()
     _, buffer = cv2.imencode('.png', superimposed_img)
     gradcam_file.write(buffer)
-    gradcam_file.seek(0)  # Torna all'inizio del buffer
+    gradcam_file.seek(0)
 
-    # Carica l'immagine Grad-CAM su Google Cloud Storage
-    gradcam_url = upload_file_to_gcs1(gradcam_file, f"{user_uid}/Radiografia1", "gradcam.png")
-    return gradcam_url
+    return gradcam_file
 
 def upload_file_to_gcs1(file, path, name, content_type=None):
     """Funzione per caricare file su Google Cloud Storage."""
@@ -716,7 +714,7 @@ def predict():
         else:
             print(f"Debug: Nessuna radiografia trovata per l'utente {user_uid}.")
         img_array, img_rgb = preprocess_image(file)
-        original_image_url = upload_file_to_gcs1(file, f"{user_uid}/Radiografia{num_folder + 1}", "original_image.png")
+        original_image_url = upload_file_to_gcs1(file, f"{user_uid}/Radiografia{num_folder + 1}", f"original_image{num_folder + 1}.png")
 
         print("Debug: Immagine caricata correttamente.")
 
@@ -727,7 +725,9 @@ def predict():
         superimposed_img = generate_gradcam(img_array, model, predicted_class, img_rgb)
 
         # Salva e carica l'immagine Grad-CAM
-        gradcam_url = save_and_upload_gradcam_image(superimposed_img, user_uid)
+        gradcam_file = save_gradcam_image(superimposed_img, user_uid)
+
+        gradcam_image_url = upload_file_to_gcs1(gradcam_file, f"{user_uid}/Radiografia{num_folder + 1}", f"gradcam_image{num_folder + 1}.png")
 
         class_labels = {
             0: 'Classe 1: Normale',
@@ -742,7 +742,7 @@ def predict():
             'predicted_class': predicted_label,
             'confidence': confidence,
             'original_image': original_image_url,
-            'gradcam_image': gradcam_url  
+            'gradcam_image': gradcam_image_url  
         })
 
     except Exception as e:

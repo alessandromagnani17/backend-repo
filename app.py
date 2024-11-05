@@ -650,7 +650,7 @@ def get_radiographs(user_uid):
 def count_existing_folders(user_uid):
     bucket = get_gcs_bucket()
     
-    print("Stampo tutto il contenuto del bucket:")
+    #print("Stampo tutto il contenuto del bucket:")
     all_blobs = bucket.list_blobs(prefix=f'{user_uid}/')
 
     found_folders = set()
@@ -660,17 +660,12 @@ def count_existing_folders(user_uid):
         folder_name = '/'.join(blob.name.split('/')[:-1])
         found_folders.add(folder_name)
 
-        print(f"Blob trovato: {blob.name}")
-
-    print("Stampo cartelle inizio")
-    if not found_folders:
-        print("Nessuna cartella trovata.")
-    else:
-        for folder in found_folders:
-            print(f"Cartella trovata: {folder}")
-    print("Stampo cartelle fine")
+        #print(f"Blob trovato: {blob.name}")
 
     return len(found_folders)
+
+from datetime import datetime
+import json
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -679,31 +674,45 @@ def predict():
         return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
-    user_uid = request.form.get('userUID')
+    doctor_data = request.form.get('userData')
+    patient_uid = request.form.get('selectedPatientID')
+    knee_side = request.form.get('selectedSide')
 
     try:
-        # AGGIUNGI TENDINA PAZIENTI
-        num_folder = count_existing_folders(user_uid)
-        if num_folder != 0:
-            print(f"Debug: L'utente {user_uid} ha già caricato {num_folder} radiografie.")
-        else:
-            print(f"Debug: Nessuna radiografia trovata per l'utente {user_uid}.")
+        doctor_data_dict = json.loads(doctor_data)
+    except json.JSONDecodeError:
+        print("Debug: Errore nella decodifica di doctor_data.")
+        return jsonify({'error': 'Invalid user data'}), 400
+
+    # Stampa ogni chiave e valore di doctor_data
+    print("Doctor Data:")
+    for k, v in doctor_data_dict.items():
+        print(f"K{k} -- {v}")  # Stampa la chiave e il valore
+
+    try:
+        # Conta le radiografie esistenti
+        num_folder = count_existing_folders(patient_uid)
+        print(f"Debug: Numero di radiografie esistenti per l'utente {patient_uid}: {num_folder}")
+
+        # Pre-processa e carica l'immagine originale
         img_array, img_rgb = preprocess_image(file)
-        original_image_url = upload_file_to_gcs1(file, f"{user_uid}/Radiografia{num_folder + 1}", f"original_image{num_folder + 1}.png")
+        original_image_url = upload_file_to_gcs1(
+            file, f"{patient_uid}/Radiografia{num_folder + 1}", f"original_image{num_folder + 1}.png"
+        )
+        #print("Debug: Immagine originale caricata correttamente su Google Cloud Storage.")
 
-        print("Debug: Immagine caricata correttamente.")
-
+        # Predici la classe
         predicted_class, confidence = predict_class(img_array, model)
-        print(f"Debug: Classe predetta - {predicted_class}, Confidenza: {confidence}")
+        #print(f"Debug: Classe predetta - {predicted_class}, Confidenza: {confidence}")
 
         # Genera l'immagine Grad-CAM
         superimposed_img = generate_gradcam(img_array, model, predicted_class, img_rgb)
+        gradcam_file = save_gradcam_image(superimposed_img, patient_uid)
+        gradcam_image_url = upload_file_to_gcs1(
+            gradcam_file, f"{patient_uid}/Radiografia{num_folder + 1}", f"gradcam_image{num_folder + 1}.png"
+        )
 
-        # Salva e carica l'immagine Grad-CAM
-        gradcam_file = save_gradcam_image(superimposed_img, user_uid)
-
-        gradcam_image_url = upload_file_to_gcs1(gradcam_file, f"{user_uid}/Radiografia{num_folder + 1}", f"gradcam_image{num_folder + 1}.png")
-
+        # Definisce l'etichetta della classe
         class_labels = {
             0: 'Classe 1: Normale',
             1: 'Classe 2: Lieve osteoartrite',
@@ -713,16 +722,40 @@ def predict():
         }
         predicted_label = class_labels.get(predicted_class, 'Unknown class')
 
+        # Crea il contenuto del file di testo
+        info_content = (
+            f"UID paziente: {patient_uid}\n"
+            f"Data di caricamento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Classe predetta: {predicted_label}\n"
+            f"Lato del ginocchio: {knee_side}\n"
+            f"Confidenza: {confidence:.2f}\n"
+            f"Radiografia caricata da: {doctor_data_dict['name']} {doctor_data_dict['family_name']}\n"
+            f"UID dottore: {doctor_data_dict['uid']}\n"
+            f"Codice identificativo dottore: {doctor_data_dict['doctorID']}\n"
+        )
+
+        info_file = io.BytesIO(info_content.encode('utf-8'))
+
+        # Carica il "file" di testo su Google Cloud Storage
+        info_file_url = upload_file_to_gcs1(
+            info_file,
+            f"{patient_uid}/Radiografia{num_folder + 1}",
+            "info.txt",
+            content_type="text/plain"
+        )
+
         return jsonify({
             'predicted_class': predicted_label,
             'confidence': confidence,
             'original_image': original_image_url,
-            'gradcam_image': gradcam_image_url  
+            'gradcam_image': gradcam_image_url,
+            'info_file': info_file_url
         })
 
     except Exception as e:
         print(f"Debug: Errore durante la predizione - {str(e)}")
         return jsonify({'error': str(e)}), 500
+
 
 
 @app.route('/images/<path:image_name>', methods=['GET'])

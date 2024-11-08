@@ -629,22 +629,105 @@ def get_radiographs(user_uid):
         radiographs = []
         num_folders = count_existing_folders(user_uid)
         if num_folders == 0:
-            return jsonify({'message': 'No radiographs found'}), 404
+            return jsonify(radiographs)
 
         for i in range(1, num_folders + 1):
             folder_name = f"Radiografia{i}"
             original_url = get_image_url(user_uid, folder_name, f"original_image{i}.png")
-            #gradcam_url = get_image_url(folder_name, "gradcam.png")
+            gradcam_url = get_image_url(user_uid, folder_name, f"gradcam_image{i}.png")
+            info_txt = get_image_url(user_uid, folder_name, f"info.txt")
+            radiography_id = read_radiograph_id_from_info(f"{user_uid}/{folder_name}/info.txt")
+            print("Trovato ID --> " + radiography_id)
 
             radiographs.append({
                 'original_image': original_url,
-                #'gradcam_image': gradcam_url,
+                'gradcam_image': gradcam_url,
+                'info_txt': info_txt,
+                'radiography_id': radiography_id,
             })
 
         return jsonify(radiographs)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+@app.route('/get_radiographs_info/<user_uid>/<idx>', methods=['GET'])
+def get_radiographs_info(user_uid, idx):
+    bucket = get_gcs_bucket()
+    path = "" + str(user_uid) + "/Radiografia" + str(idx) + "/info.txt"
+    print("Cerco --> " + path)
+    info_blob = bucket.blob(path)
+    info_content = info_blob.download_as_text()
+
+    radiographyInfo = {
+        "name": "",
+        "surname": "",
+        "birthdate": "",
+        "tax_code": "",
+        "address": "",
+        "cap_code": "",
+        "gender": "",
+        "userId": "",
+        "radiography_id": "",
+        "date": "",
+        "prediction": "",
+        "side": "",
+        "confidence": "",
+        "doctorLoaded": "",
+        "doctorUid": "",
+        "doctorID": "",
+    }
+
+    for line in info_content.splitlines():
+        if line.startswith("UID paziente:"):
+            radiographyInfo["userId"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Nome paziente:"):
+            radiographyInfo["name"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Cognome paziente:"):
+            radiographyInfo["surname"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Data di nascita paziente:"):
+            radiographyInfo["birthdate"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Codice fiscale paziente:"):
+            radiographyInfo["tax_code"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Indirizzo paziente:"):
+            radiographyInfo["address"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("CAP paziente:"):
+            radiographyInfo["cap_code"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Genere paziente:"):
+            radiographyInfo["gender"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("ID radiografia:"):
+            radiographyInfo["radiography_id"] = line.split(": ", 1)[1].strip()            
+        elif line.startswith("Data di caricamento:"):
+            radiographyInfo["date"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Classe predetta:"):
+            radiographyInfo["prediction"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Lato del ginocchio:"):
+            radiographyInfo["side"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Confidenza:"):
+            radiographyInfo["confidence"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Radiografia caricata da:"):
+            radiographyInfo["doctorLoaded"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("UID dottore:"):
+            radiographyInfo["doctorUid"] = line.split(": ", 1)[1].strip()
+        elif line.startswith("Codice identificativo dottore:"):
+            radiographyInfo["doctorID"] = line.split(": ", 1)[1].strip()
+
+    return jsonify(radiographyInfo)
+    
+def read_radiograph_id_from_info(file_path):
+    """Legge l'ID della radiografia dal file info.txt all'interno del bucket di Google Cloud Storage."""
+    bucket = get_gcs_bucket()  # Ottiene il bucket
+    info_blob = bucket.blob(file_path)
+    info_content = info_blob.download_as_text()
+    
+    # Trova la riga con l'ID della radiografia
+    radiograph_id = None
+    for line in info_content.splitlines():
+        if line.startswith("ID radiografia:"):
+            radiograph_id = line.split(":")[1].strip()
+            break
+    
+    return radiograph_id
 
 
 def count_existing_folders(user_uid):
@@ -666,6 +749,7 @@ def count_existing_folders(user_uid):
 
 from datetime import datetime
 import json
+import uuid
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -683,11 +767,6 @@ def predict():
     except json.JSONDecodeError:
         print("Debug: Errore nella decodifica di doctor_data.")
         return jsonify({'error': 'Invalid user data'}), 400
-
-    # Stampa ogni chiave e valore di doctor_data
-    print("Doctor Data:")
-    for k, v in doctor_data_dict.items():
-        print(f"K{k} -- {v}")  # Stampa la chiave e il valore
 
     try:
         # Conta le radiografie esistenti
@@ -722,9 +801,23 @@ def predict():
         }
         predicted_label = class_labels.get(predicted_class, 'Unknown class')
 
+        radiograph_id = str(uuid.uuid4())
+
+        name, surname, birthdate, tax_code, address, cap_code, gender = get_patient_information(patient_uid)
+
+        print("Nome: " + name + "surname: " + surname + "birthdate: " + birthdate + "tax_code: " + tax_code + "address: " + address + "gender: " + gender)
+
         # Crea il contenuto del file di testo
         info_content = (
             f"UID paziente: {patient_uid}\n"
+            f"Nome paziente: {name}\n"
+            f"Cognome paziente: {surname}\n"
+            f"Data di nascita paziente: {birthdate}\n"
+            f"Codice fiscale paziente: {tax_code}\n"
+            f"Indirizzo paziente: {address}\n"
+            f"CAP paziente: {cap_code}\n"
+            f"Genere paziente: {gender}\n"
+            f"ID radiografia: {radiograph_id}\n"
             f"Data di caricamento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"Classe predetta: {predicted_label}\n"
             f"Lato del ginocchio: {knee_side}\n"
@@ -756,6 +849,32 @@ def predict():
         print(f"Debug: Errore durante la predizione - {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+def get_patient_information(uid):
+    try:
+        # Recupera il documento del paziente dal database Firestore
+        patient_ref = db.collection('osteoarthritiis-db').document(uid)
+        patient = patient_ref.get()
+
+        if patient.exists:
+            patient_data = patient.to_dict()
+            
+            # Estrai i dettagli del paziente
+            name = patient_data.get("name", "")
+            surname = patient_data.get("family_name", "")
+            birthdate = patient_data.get("birthdate", "")
+            tax_code = patient_data.get("tax_code", "")
+            address = patient_data.get("address", "")
+            cap_code = patient_data.get("cap_code", "")
+            gender = patient_data.get("gender", "")
+            
+            return name, surname, birthdate, tax_code, address, cap_code, gender
+        else:
+            print(f"Nessun paziente trovato con UID: {uid}")
+            return None  # Oppure una tupla di valori vuoti se preferisci
+
+    except Exception as e:
+        print("Errore nel recupero delle informazioni del paziente:", str(e))
+        return None  # Oppure una tupla di valori vuoti in caso di errore
 
 
 @app.route('/images/<path:image_name>', methods=['GET'])

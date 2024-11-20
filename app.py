@@ -47,7 +47,7 @@ db = firestore.client()
 storage_client = storage.Client()
 
 
-model_path = r"C:/Users/Utente/Downloads/pesi.h5"
+model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
 
 model = load_model(model_path)
 
@@ -90,7 +90,6 @@ def send_verification_email(email, link):
             server.starttls()  # Sicurezza
             server.login(sender_email, sender_password)  # Login
             server.sendmail(sender_email, email, message.as_string())  # Invia l'email
-            print("Email di verifica inviata con successo!")
     except Exception as e:
         print("Errore nell'invio dell'email:", e)
 
@@ -107,7 +106,6 @@ def register():
             display_name=data.get('username'),  # Username
             disabled=False
         )
-        print(f"Utente creato con successo: {user.uid}")
 
         # Dati comuni tra dottori e pazienti
         user_data = {
@@ -135,7 +133,6 @@ def register():
 
         # Salva i dati nella collezione 'utenti'
         db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
-        print("Dati utente salvati nel database:", user_data)
 
         # Genera il link di verifica
         verification_link = f"http://localhost:8080/verify-email/{user.uid}"
@@ -166,7 +163,6 @@ def login():
 
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
-        print("Utente recuperato:", {key: value for key, value in user.__dict__.items()})
 
         user_doc = db.collection('osteoarthritiis-db').document(uid).get()
 
@@ -256,8 +252,6 @@ def decrement_attempts():
     data = request.json
     email = data.get('email')
 
-    print("Email ricevuta: " + email)
-
     if not email:
         return jsonify({"error": "Email is required"}), 400
 
@@ -269,7 +263,6 @@ def decrement_attempts():
     for user_doc in user_query:
         user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
         uid = user_doc.id  # Ottieni l'ID del documento
-        print("Uid trovato: " + uid)
 
     if user_data is None:
         print("Non trovo nessun utente")
@@ -277,8 +270,6 @@ def decrement_attempts():
 
     # Decrementa i tentativi
     attempts_left = user_data.get('loginAttemptsLeft', 0)
-
-    print("Tentativi letti: " + str(attempts_left))
 
     if attempts_left > 0:
         db.collection('osteoarthritiis-db').document(uid).update({
@@ -302,7 +293,6 @@ def get_doctors():
         for doctor in doctors_ref:
             doctor_data = doctor.to_dict()
             doctors.append(doctor_data)
-            print(f"Dottore recuperato: {doctor_data}")  # Stampa i dati di ogni dottore
 
         # Restituisci la lista dei dottori come risposta JSON
         return jsonify(doctors), 200
@@ -322,7 +312,6 @@ def get_patients():
         for patient in patients_ref:
             patient_data = patient.to_dict()
             patients.append(patient_data)
-            print(f"Dottore recuperato: {patient_data}")  # Stampa i dati di ogni dottore
 
         # Restituisci la lista dei pazienti come risposta JSON
         return jsonify(patients), 200
@@ -336,15 +325,15 @@ def get_patients():
 @app.route('/api/<doctor_id>/patients', methods=['GET'])
 def get_patients_from_doctor(doctor_id):
     try:
-        print(f"Richiesta ricevuta per Doctor ID: {doctor_id}")  # Debug
         # Recupera tutti i pazienti associati al dottore corrente in Firestore
         patients_ref = db.collection('osteoarthritiis-db').where('DoctorRef', '==', doctor_id).stream()
 
         patients = []
         for patient in patients_ref:
             patient_data = patient.to_dict()
-            patients.append(patient_data)
-            print(f"Paziente recuperato per il dottore {doctor_id}: {patient_data}")
+            user = auth.get_user(patient_data['userId'])
+            if user.email_verified:
+              patients.append(patient_data)
 
         # Restituisci la lista dei pazienti come risposta JSON
         return jsonify(patients), 200
@@ -383,8 +372,6 @@ def verify_email(uid):
 @app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
 def get_user_radiographs(patient_id):
     try:
-        print("Patient ID ricevuto dal frontend:", patient_id)  # Debug per verificare il patientId
-
         # Recupera le radiografie per il paziente specificato
         radiographs_ref = db.collection('radiographs').where('patientId', '==', patient_id).stream()
 
@@ -392,7 +379,6 @@ def get_user_radiographs(patient_id):
         for radiograph in radiographs_ref:
             radiographs.append(radiograph.to_dict())
 
-        print("Radiografie trovate nel backend:", radiographs)  # Debug per verificare le radiografie trovate
         return jsonify(radiographs), 200
     
     except Exception as e:
@@ -405,97 +391,52 @@ def get_gcs_bucket():
     """Ottiene il bucket di Google Cloud Storage."""
     storage_client = storage.Client()
     bucket_name = 'osteoarthritis-radiographs-archive'
+    print(f"Connessione al bucket: {bucket_name}")
     return storage_client.bucket(bucket_name)
-
-
-
-
-def upload_file_to_gcs(file, patient_id):
-    """Funzione per caricare file su Google Cloud Storage."""
-    print(f"File ricevuto: {file.filename}, Tipo: {file.content_type}")  # Debug
-
-    # Ottieni il bucket
-    bucket = get_gcs_bucket()
-    
-    # Definisci il nome del file all'interno del bucket
-    blob = bucket.blob(f"{patient_id}/{file.filename}")
-    
-    # Carica il file
-    blob.upload_from_file(file, content_type=file.content_type)    
-
-    # Restituisci l'URL pubblico del file
-    blob.make_public()
-    return blob.public_url
-
-
-@app.route('/api/patients/<patient_id>/radiographs', methods=['POST']) 
-def upload_radiograph(patient_id):
-    print("Ricevuta richiesta di caricamento radiografia")  # Debug
-
-    if 'file' not in request.files or 'patientId' not in request.form:
-        print("File o patientId mancante")  # Debug
-        return jsonify({"error": "File o patientId mancante"}), 400
-
-    file = request.files['file']
-    patient_id = request.form['patientId']
-
-    if file.filename == '':
-        print("Nessun file selezionato")  # Debug
-        return jsonify({"error": "Nessun file selezionato"}), 400
-
-    try:
-        print(f"File ricevuto: {file.filename}, ID Paziente: {patient_id}")  # Debug
-        # Carica il file su Google Cloud Storage
-        file_url = upload_file_to_gcs(file, patient_id)
-
-        # Salva l'URL del file nella documentazione del paziente su Firestore
-        patient_ref = db.collection('osteoarthritiis-db').document(patient_id)
-        patient_ref.update({
-            'radiographs': firestore.ArrayUnion([file_url])
-        })
-
-        print(f"File caricato con successo, URL: {file_url}")  # Debug
-        return jsonify({"message": "Radiografia caricata con successo!", "fileUrl": file_url}), 200
-
-    except Exception as e:
-        print(f"Errore durante l'upload: {str(e)}")  # Stampa l'errore
-        return jsonify({"error": str(e)}), 500
-
 
 
 @app.route('/api/patients/<patient_id>/radiographs', methods=['GET'])
 def get_patient_radiographs(patient_id):
-    try:
+    try:        
         # Ottieni il bucket
         bucket = get_gcs_bucket()
 
         # Elenco di radiografie associate all'ID del paziente
-        blobs = bucket.list_blobs(prefix=f"{patient_id}/")
+        prefix = f"{patient_id}/"
+        
+        blobs = list(bucket.list_blobs(prefix=prefix))
 
-        # Crea una lista di URL delle radiografie
+        # Crea una lista di URL delle radiografie che rispettano il formato
         radiographs = []
         
         for blob in blobs:
-            # Verifica che l'URL pubblico sia accessibile prima di aggiungerlo alla lista
-            try:
-                response = requests.head(blob.public_url)
-                if response.status_code == 200:
-                    radiographs.append({
-                        "url": blob.public_url,
-                        "name": blob.name,
-                        "date": blob.time_created.strftime("%Y-%m-%d")
-                    })
-                else:
-                    print(f"File non accessibile: {blob.name}")
-            except Exception as e:
-                print(f"Errore di accesso per il blob {blob.name}: {e}")
+            # Filtra solo i file con nome 'original_imageX.png'
+            if 'original_image' in blob.name and blob.name.endswith('.png'):
+                try:
+                    # Verifica che l'URL pubblico sia accessibile prima di aggiungerlo alla lista
+                    response = requests.head(blob.public_url)
+                    
+                    if response.status_code == 200:
+                        radiographs.append({
+                            "url": blob.public_url,
+                            "name": blob.name,
+                            "date": blob.time_created.strftime("%Y-%m-%d")
+                        })
+                    else:
+                        print(f"File non accessibile (HTTP {response.status_code}): {blob.name}")
+                except Exception as e:
+                    print(f"[ERROR] Errore di accesso per il blob {blob.name}: {e}")
+            else:
+                print(f"Blob ignorato: {blob.name}")
 
-        # Restituisci l'elenco delle radiografie come JSON
+        # Restituisci l'elenco filtrato delle radiografie come JSON
         return jsonify(radiographs), 200
 
     except Exception as e:
-        print(f"Errore durante il recupero delle radiografie: {str(e)}")
+        print(f"[ERROR] Errore durante il recupero delle radiografie: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+
 
 
 
@@ -508,9 +449,6 @@ def download_radiograph():
 
         if not file_url:
             return jsonify({"error": "File URL is missing"}), 400
-
-        # Log URL being fetched
-        print(f"Fetching radiograph from URL: {file_url}")
 
         # Scarica il file dall'URL pubblico di Google Cloud Storage
         response = requests.get(file_url)
@@ -575,6 +513,7 @@ def predict_class(img_array, model):
     confidence = float(np.max(predictions[0]))
     return predicted_class, confidence
 
+
 def generate_gradcam(img_array, model, predicted_class, img_rgb):
     heatmap = make_gradcam_heatmap(img_array, model, "conv5_block3_out", pred_index=predicted_class)
     heatmap = np.uint8(255 * heatmap)  # Normalizza la heatmap
@@ -582,6 +521,7 @@ def generate_gradcam(img_array, model, predicted_class, img_rgb):
     heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)  # Applica una mappa di colore
     superimposed_img = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)  # Sovrapponi la heatmap
     return superimposed_img
+
 
 def save_gradcam_image(superimposed_img, user_uid):
     gradcam_file = io.BytesIO()
@@ -591,7 +531,8 @@ def save_gradcam_image(superimposed_img, user_uid):
 
     return gradcam_file
 
-def upload_file_to_gcs1(file, path, name, content_type=None):
+
+def upload_file_to_gcs(file, path, name, content_type=None):
     """Funzione per caricare file su Google Cloud Storage."""
 
     # Ottieni il bucket
@@ -604,6 +545,7 @@ def upload_file_to_gcs1(file, path, name, content_type=None):
     # Restituisci l'URL pubblico del file
     blob.make_public()
     return blob.public_url
+
 
 def get_image_url(user_uid, folder_name, image_name):
     """Restituisce l'URL di un'immagine nel bucket Google Cloud Storage."""
@@ -637,7 +579,6 @@ def get_radiographs(user_uid):
             gradcam_url = get_image_url(user_uid, folder_name, f"gradcam_image{i}.png")
             info_txt = get_image_url(user_uid, folder_name, f"info.txt")
             radiography_id = read_radiograph_id_from_info(f"{user_uid}/{folder_name}/info.txt")
-            print("Trovato ID --> " + radiography_id)
 
             radiographs.append({
                 'original_image': original_url,
@@ -655,7 +596,6 @@ def get_radiographs(user_uid):
 def get_radiographs_info(user_uid, idx):
     bucket = get_gcs_bucket()
     path = "" + str(user_uid) + "/Radiografia" + str(idx) + "/info.txt"
-    print("Cerco --> " + path)
     info_blob = bucket.blob(path)
     info_content = info_blob.download_as_text()
 
@@ -771,14 +711,12 @@ def predict():
     try:
         # Conta le radiografie esistenti
         num_folder = count_existing_folders(patient_uid)
-        print(f"Debug: Numero di radiografie esistenti per l'utente {patient_uid}: {num_folder}")
 
         # Pre-processa e carica l'immagine originale
         img_array, img_rgb = preprocess_image(file)
-        original_image_url = upload_file_to_gcs1(
+        original_image_url = upload_file_to_gcs(
             file, f"{patient_uid}/Radiografia{num_folder + 1}", f"original_image{num_folder + 1}.png"
         )
-        #print("Debug: Immagine originale caricata correttamente su Google Cloud Storage.")
 
         # Predici la classe
         predicted_class, confidence = predict_class(img_array, model)
@@ -787,7 +725,7 @@ def predict():
         # Genera l'immagine Grad-CAM
         superimposed_img = generate_gradcam(img_array, model, predicted_class, img_rgb)
         gradcam_file = save_gradcam_image(superimposed_img, patient_uid)
-        gradcam_image_url = upload_file_to_gcs1(
+        gradcam_image_url = upload_file_to_gcs(
             gradcam_file, f"{patient_uid}/Radiografia{num_folder + 1}", f"gradcam_image{num_folder + 1}.png"
         )
 
@@ -804,8 +742,6 @@ def predict():
         radiograph_id = str(uuid.uuid4())
 
         name, surname, birthdate, tax_code, address, cap_code, gender = get_patient_information(patient_uid)
-
-        print("Nome: " + name + "surname: " + surname + "birthdate: " + birthdate + "tax_code: " + tax_code + "address: " + address + "gender: " + gender)
 
         # Crea il contenuto del file di testo
         info_content = (
@@ -830,7 +766,7 @@ def predict():
         info_file = io.BytesIO(info_content.encode('utf-8'))
 
         # Carica il "file" di testo su Google Cloud Storage
-        info_file_url = upload_file_to_gcs1(
+        info_file_url = upload_file_to_gcs(
             info_file,
             f"{patient_uid}/Radiografia{num_folder + 1}",
             "info.txt",

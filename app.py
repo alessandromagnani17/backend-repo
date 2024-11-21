@@ -20,7 +20,8 @@ import io
 import requests
 from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
-
+from io import BytesIO
+import h5py
 
 
 load_dotenv()
@@ -47,12 +48,31 @@ db = firestore.client()
 storage_client = storage.Client()
 
 
-model_path = r"/Users/alessandromagnani/Downloads/pesi.h5"
+# Funzione per scaricare e caricare i pesi dal bucket
+def load_model_from_gcs(bucket_name, blob_name):
+    # Inizializza il client e accedi al bucket
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
 
-model = load_model(model_path)
+    # Scarica i dati in memoria
+    model_bytes = BytesIO()
+    blob.download_to_file(model_bytes)
+    model_bytes.seek(0)  # Riporta il puntatore all'inizio del file
 
+    # Usa Keras per caricare il modello direttamente dal buffer
+    with h5py.File(model_bytes, 'r') as h5file:
+        model = load_model(h5file)
 
+    print("Modello caricato correttamente dalla memoria!")
+    return model
 
+# Nome del bucket e del file
+bucket_name = 'osteoarthritis-radiographs-archive'
+blob_name = 'MODELLO/pesi.h5'
+
+# Carica il modello direttamente dal bucket
+model = load_model_from_gcs(bucket_name, blob_name)
 
 
 
@@ -384,8 +404,7 @@ def get_user_radiographs(patient_id):
     except Exception as e:
         print("Errore nel recupero delle radiografie:", str(e))
         return jsonify({"error": str(e)}), 500
-
-
+    
 
 def get_gcs_bucket():
     """Ottiene il bucket di Google Cloud Storage."""
@@ -547,6 +566,27 @@ def upload_file_to_gcs(file, path, name, content_type=None):
     return blob.public_url
 
 
+@app.route('/upload-to-dataset', methods=['POST'])
+def upload_to_dataset():
+    try:
+        # Ottieni i dati dal form
+        file = request.files['file']
+        patient_id = request.form.get('patientID')
+        side = request.form.get('side', 'Unknown')  # Default: Unknown side
+
+        # Imposta il nome del file
+        file_name = f"{patient_id}_{side}_{file.filename}"
+
+        # Carica il file nella cartella 'dataset'
+        upload_file_to_gcs(file, "dataset", file_name, file.content_type)
+
+        return {"message": "File caricato con successo."}, 200
+
+    except Exception as e:
+        print(f"Errore durante il caricamento del file: {e}")
+        return {"error": str(e)}, 500
+
+
 def get_image_url(user_uid, folder_name, image_name):
     """Restituisce l'URL di un'immagine nel bucket Google Cloud Storage."""
     # Path dell'immagine
@@ -565,32 +605,50 @@ def get_image_url(user_uid, folder_name, image_name):
         return None
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+def process_folder(bucket, user_uid, folder_name, folder_index):
+    """
+    Processa una singola cartella nel bucket e restituisce i dati della radiografia.
+    """
+    try:
+        original_url = get_image_url(user_uid, folder_name, f"original_image{folder_index}.png")
+        gradcam_url = get_image_url(user_uid, folder_name, f"gradcam_image{folder_index}.png")
+        info_txt = get_image_url(user_uid, folder_name, f"info.txt")
+        radiography_id = read_radiograph_id_from_info(f"{user_uid}/{folder_name}/info.txt")
+
+        return {
+            'original_image': original_url,
+            'gradcam_image': gradcam_url,
+            'info_txt': info_txt,
+            'radiography_id': radiography_id,
+        }
+    except Exception as e:
+        print(f"Errore durante l'elaborazione della cartella {folder_name}: {str(e)}")
+        return None
+
+
 @app.route('/get_radiographs/<user_uid>', methods=['GET'])
 def get_radiographs(user_uid):
     try:
-        radiographs = []
-        num_folders = count_existing_folders(user_uid)
+        bucket = get_gcs_bucket()
+        num_folders, folders = count_existing_folders(user_uid, return_folders=True)
+
         if num_folders == 0:
-            return jsonify(radiographs)
+            return jsonify([])
 
-        for i in range(1, num_folders + 1):
-            folder_name = f"Radiografia{i}"
-            original_url = get_image_url(user_uid, folder_name, f"original_image{i}.png")
-            gradcam_url = get_image_url(user_uid, folder_name, f"gradcam_image{i}.png")
-            info_txt = get_image_url(user_uid, folder_name, f"info.txt")
-            radiography_id = read_radiograph_id_from_info(f"{user_uid}/{folder_name}/info.txt")
-
-            radiographs.append({
-                'original_image': original_url,
-                'gradcam_image': gradcam_url,
-                'info_txt': info_txt,
-                'radiography_id': radiography_id,
-            })
+        # Parallelizza il caricamento dei dati delle cartelle
+        with ThreadPoolExecutor() as executor:
+            radiographs = list(executor.map(
+                lambda folder: process_folder(bucket, user_uid, folder.split('/')[-1], int(folder.split('/')[-1].replace('Radiografia', ''))),
+                folders
+            ))
 
         return jsonify(radiographs)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
     
 @app.route('/get_radiographs_info/<user_uid>/<idx>', methods=['GET'])
 def get_radiographs_info(user_uid, idx):
@@ -670,22 +728,27 @@ def read_radiograph_id_from_info(file_path):
     return radiograph_id
 
 
-def count_existing_folders(user_uid):
+def count_existing_folders(user_uid, return_folders=False):
+    """
+    Conta il numero di cartelle per un dato UID utente e, opzionalmente, restituisce l'elenco delle cartelle.
+    """
     bucket = get_gcs_bucket()
-    
-    #print("Stampo tutto il contenuto del bucket:")
-    all_blobs = bucket.list_blobs(prefix=f'{user_uid}/')
+    all_blobs = bucket.list_blobs(prefix=f"{user_uid}/")
 
     found_folders = set()
 
     for blob in all_blobs:
-        # Aggiungi solo il prefisso (cartella) senza il file
         folder_name = '/'.join(blob.name.split('/')[:-1])
-        found_folders.add(folder_name)
+        if folder_name:  # Ignora i blob senza una struttura di cartelle
+            found_folders.add(folder_name)
 
-        #print(f"Blob trovato: {blob.name}")
+    if return_folders:
+        # Ordina le cartelle per numero crescente
+        sorted_folders = sorted(found_folders, key=lambda x: int(x.split('/')[-1].replace('Radiografia', '')))
+        return len(sorted_folders), sorted_folders
 
     return len(found_folders)
+
 
 from datetime import datetime
 import json

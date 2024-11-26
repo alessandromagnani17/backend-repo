@@ -1,7 +1,7 @@
 FROM python:3.8
 
 # set a directory for the app
-WORKDIR /asw-project/backend/app
+WORKDIR /osteoarthritis-project/backend/app
 
 # copy all the files to the container
 COPY . .

@@ -156,7 +156,7 @@ def register():
         db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
 
         # Genera il link di verifica
-        verification_link = f"http://localhost:8080/verify-email/{user.uid}"
+        verification_link = f"http://34.122.99.160:8080/verify-email/{user.uid}"
         # Invia l'email di verifica
         send_verification_email(data['email'], verification_link)
 

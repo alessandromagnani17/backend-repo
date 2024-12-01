@@ -6,7 +6,7 @@ import boto3
 from botocore.exceptions import ClientError
 import jwt
 import firebase_admin
-from firebase_admin import credentials, auth, firestore
+from firebase_admin import credentials, auth, firestore, messaging
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -19,8 +19,8 @@ from tensorflow.keras.preprocessing import image
 import io
 import requests
 from tensorflow.keras.models import load_model
-import matplotlib.pyplot as plt
 from io import BytesIO
+from datetime import datetime
 import h5py
 
 
@@ -243,6 +243,7 @@ def update_user():
         return jsonify({"error": str(e), "message": "Errore durante l'aggiornamento dei dati."}), 400
 
 
+
 @app.route('/check-email-verification', methods=['POST'])
 def check_email_verification():
     data = request.json
@@ -455,6 +456,86 @@ def get_patient_radiographs(patient_id):
         print(f"[ERROR] Errore durante il recupero delle radiografie: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/operations', methods=['POST'])
+def add_operation():
+    try:
+        # Ottieni i dati dalla richiesta
+        data = request.json
+        
+        # Log dei dati ricevuti per debug
+        print("Dati ricevuti:", data)
+        
+        doctor_id = data.get('doctorId')
+        patient_id = data.get('patientId')
+        operation_date = data.get('operationDate')
+        description = data.get('description')  # Aggiungi descrizione se prevista
+
+        # Validazione dei dati richiesti
+        if not doctor_id or not patient_id or not operation_date:
+            return jsonify({"error": "Dati mancanti (doctorId, patientId, operationDate)"}), 400
+
+        # Validazione del formato della data
+        try:
+            operation_date_parsed = datetime.fromisoformat(operation_date)
+        except ValueError:
+            return jsonify({"error": "Formato data non valido (usa ISO 8601: YYYY-MM-DD)"}), 400
+
+        # Controllo che la data non sia nel passato
+        if operation_date_parsed < datetime.now():
+            return jsonify({"error": "La data deve essere futura"}), 400
+
+        # Prepara i dati da salvare
+        operations_ref = db.collection('operations')
+        operation_data = {
+            "doctorId": doctor_id,
+            "patientId": patient_id,
+            "operationDate": operation_date_parsed.isoformat(),
+            "description": description or "",  # Descrizione opzionale
+            "notificationStatus": "pending",
+            "createdAt": datetime.now().isoformat(),  # Timestamp della creazione
+        }
+
+        # Aggiungi l'operazione nel database
+        operation_ref = operations_ref.add(operation_data)
+
+        # Restituisci il risultato
+        return jsonify({
+            "message": "Operazione pianificata",
+            "id": operation_ref[1].id,
+            "operation": operation_data  # Includi i dati salvati come feedback
+        }), 201
+    except Exception as e:
+        # Log dell'errore per debug
+        print("Errore durante la pianificazione dell'operazione:", str(e))
+        return jsonify({"error": "Errore interno del server"}), 500
+
+
+
+# Rotta per recuperare le operazioni di un paziente
+@app.route('/api/patients/<patient_id>/operations', methods=['GET'])
+def get_patient_operations(patient_id):
+    try:
+        # Recupera i documenti dalla collezione "operations" dove patientId è uguale al patient_id
+        operations_ref = db.collection('operations')
+        operations_query = operations_ref.where('patientId', '==', patient_id)
+        operations = operations_query.stream()
+
+        # Crea una lista con i dati delle operazioni
+        operations_list = []
+        for operation in operations:
+            operation_data = operation.to_dict()
+            operation_data['id'] = operation.id  # Aggiungi l'ID del documento
+            operations_list.append(operation_data)
+
+        # Restituisce le operazioni trovate
+        return jsonify(operations_list), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
 
 
 

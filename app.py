@@ -91,7 +91,7 @@ def get_user_data_from_database(uid):
         return None  # Se l'utente non esiste
 
 
-def send_verification_email(email, link):
+def send_email(email, subject, msg):
     sender_email = "andyalemonta@gmail.com"  # Sostituisci con il tuo indirizzo email
     sender_password = "vlpy jeea avjx feql"  # Sostituisci con l'App Password di Gmail
 
@@ -99,11 +99,10 @@ def send_verification_email(email, link):
     message = MIMEMultipart()
     message["From"] = sender_email
     message["To"] = email
-    message["Subject"] = "Verifica il tuo indirizzo email"
+    message["Subject"] = subject
 
     # Corpo dell'email
-    body = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {link}"
-    message.attach(MIMEText(body, "plain"))
+    message.attach(MIMEText(msg, "plain"))
 
     # Invia l'email
     try:
@@ -158,7 +157,9 @@ def register():
         # Genera il link di verifica
         verification_link = f"http://34.122.99.160:8080/verify-email/{user.uid}"
         # Invia l'email di verifica
-        send_verification_email(data['email'], verification_link)
+        subject = "Verifica il tuo indirizzo email"
+        message = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {verification_link}"
+        send_email(data['email'], subject, message)
 
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",
@@ -301,8 +302,30 @@ def decrement_attempts():
     return jsonify({"message": "Attempts decremented", "loginAttemptsLeft": attempts_left}), 200
 
 
+@app.route('/get-attempts-left', methods=['POST'])
+def get_attempts_left():
+    data = request.json
+    email = data.get('email')
 
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
 
+    # Recupera il documento dell'utente da Firestore cercando per email
+    user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
+
+    user_data = None
+    uid = None
+    for user_doc in user_query:
+        user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
+        uid = user_doc.id  # Ottieni l'ID del documento
+
+    if user_data is None:
+        print("Non trovo nessun utente")
+        return jsonify({"error": "User not found"}), 404
+
+    attempts_left = user_data.get('loginAttemptsLeft', 0)
+
+    return jsonify({"loginAttemptsLeft": attempts_left}), 200
 
 @app.route('/api/doctors', methods=['GET'])
 def get_doctors():
@@ -386,8 +409,70 @@ def verify_email(uid):
         return jsonify({"error": "Utente non trovato"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route('/send-reset-email', methods=['POST'])
+def send_reset_email():
+    try:
+        # Recupera l'email dal corpo della richiesta
+        data = request.json
+        email = data.get('email')
+
+        if not email:
+            return jsonify({"error": "L'email è obbligatoria"}), 400
+
+        # Recupera l'UID dell'utente dall'email
+        user = auth.get_user_by_email(email)
+
+        verification_link = f"http://localhost:8080/reset-password/{user.uid}"
+        # Invia l'email di verifica
+        subject = "Resetta la tua password"
+        message = f"Per favore, resetta la tua password cliccando il seguente link: {verification_link}"
+        send_email(email, subject, message)
+
+        print("uid letto + " + user.uid)
+
+        return jsonify({"message": "Email di reset inviata con successo"}), 200
+
+    except Exception as e:
+        print("Errore durante l'invio del link di reset:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    try:
+        # Ottieni i dati dalla richiesta
+        data = request.json
+        uid = data.get('uid')
+        new_password = data.get('password')
+
+        # Validazione input
+        if not uid or not new_password:
+            return jsonify({"error": "UID e password sono obbligatori."}), 400
+
+        # Aggiorna la password dell'utente
+        try:
+            auth.update_user(uid, password=new_password)
+        except Exception as e:
+            return jsonify({"error": f"Errore durante l'aggiornamento della password: {str(e)}"}), 500
 
 
+        try:
+            db.collection('osteoarthritiis-db').document(uid).update({
+                'loginAttemptsLeft': 6
+            })
+        except Exception as e:
+            return jsonify({"error": f"Errore durante l'aggiornamento dei tentativi di login: {str(e)}"}), 500
+
+
+        return jsonify({"message": "Password aggiornata con successo."}), 200
+
+    except firebase_admin.exceptions.FirebaseError as e:
+        # Gestione errori Firebase
+        return jsonify({"error": f"Errore Firebase: {str(e)}"}), 500
+
+    except Exception as e:
+        # Gestione errori generici
+        return jsonify({"error": f"Errore: {str(e)}"}), 500
 
 
 @app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])

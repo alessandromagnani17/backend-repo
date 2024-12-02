@@ -446,8 +446,6 @@ def get_patient_radiographs(patient_id):
                         print(f"File non accessibile (HTTP {response.status_code}): {blob.name}")
                 except Exception as e:
                     print(f"[ERROR] Errore di accesso per il blob {blob.name}: {e}")
-            else:
-                print(f"Blob ignorato: {blob.name}")
 
         # Restituisci l'elenco filtrato delle radiografie come JSON
         return jsonify(radiographs), 200
@@ -533,9 +531,6 @@ def get_patient_operations(patient_id):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
 
 
 

@@ -971,5 +971,60 @@ def get_image(image_name):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/notifications', methods=['POST'])
+def send_notification():
+    try:
+        data = request.get_json()
+        patient_id = data.get('patientId')
+        message = data.get('message')
+        date = data.get('date')
+
+        if not patient_id or not message or not date:
+            return jsonify({"error": "Dati incompleti"}), 400
+
+        # Salva la notifica nel database Firestore
+        db.collection('notifications').add({
+            'patientId': patient_id,
+            'message': message,
+            'date': date
+        })
+
+        return jsonify({"message": "Notifica inviata con successo"}), 200
+
+    except Exception as e:
+        print("Errore durante l'invio della notifica:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/notifications', methods=['GET'])
+def get_notifications():
+    try:
+        # Ottieni il parametro patientId dalla query string
+        patient_id = request.args.get('patientId')
+        
+        print("Received patientId:", patient_id)  # Stampa di debug
+        
+        # Verifica se patientId è presente
+        if not patient_id:
+            print("Errore: patientId non fornito")
+            return jsonify({"error": "patientId è richiesto"}), 400
+        
+        # Recupera le notifiche dal database Firestore (oppure la logica che usi)
+        notifications_ref = db.collection('notifications').where('patientId', '==', patient_id).stream()
+        
+        notifications = []
+        for notification in notifications_ref:
+            notification_data = notification.to_dict()
+            notifications.append(notification_data)
+
+        print("Notifications found:", notifications)  # Stampa di debug
+
+        return jsonify({"notifications": notifications}), 200
+
+    except Exception as e:
+        print("Errore durante il recupero delle notifiche:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

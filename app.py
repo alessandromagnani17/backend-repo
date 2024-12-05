@@ -1036,7 +1036,7 @@ def get_notifications():
 def mark_notification_as_read(notification_id):
     try:
         notification_ref = db.collection('notifications').document(notification_id)
-        notification_ref.update({'read': True})
+        notification_ref.update({'isRead': True})
         return jsonify({"message": "Notifica segnata come letta"}), 200
     except Exception as e:
         print("Errore durante l'aggiornamento della notifica:", str(e))

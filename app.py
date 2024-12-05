@@ -978,15 +978,19 @@ def send_notification():
         patient_id = data.get('patientId')
         message = data.get('message')
         date = data.get('date')
+        time = data.get('time')  
 
-        if not patient_id or not message or not date:
+        # Validazione dei dati
+        if not patient_id or not message or not date or not time:
             return jsonify({"error": "Dati incompleti"}), 400
 
         # Salva la notifica nel database Firestore
         db.collection('notifications').add({
             'patientId': patient_id,
             'message': message,
-            'date': date
+            'date': date,
+            'time': time,  
+            'isRead': False 
         })
 
         return jsonify({"message": "Notifica inviata con successo"}), 200
@@ -1015,6 +1019,8 @@ def get_notifications():
         notifications = []
         for notification in notifications_ref:
             notification_data = notification.to_dict()
+            notification_data['id'] = notification.id  # Aggiungi l'ID del documento
+            print("NotificationID: ", notification.id)
             notifications.append(notification_data)
 
         print("Notifications found:", notifications)  # Stampa di debug
@@ -1023,6 +1029,17 @@ def get_notifications():
 
     except Exception as e:
         print("Errore durante il recupero delle notifiche:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/notifications/<notification_id>', methods=['PATCH'])
+def mark_notification_as_read(notification_id):
+    try:
+        notification_ref = db.collection('notifications').document(notification_id)
+        notification_ref.update({'read': True})
+        return jsonify({"message": "Notifica segnata come letta"}), 200
+    except Exception as e:
+        print("Errore durante l'aggiornamento della notifica:", str(e))
         return jsonify({"error": str(e)}), 500
 
 

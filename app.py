@@ -215,15 +215,25 @@ def login():
 
 
 
-@app.route('/get_user/<user_id>', methods=['GET'])
+@app.route('/api/get_user/<user_id>', methods=['GET'])
 def get_user(user_id):
+    # Log dell'ID utente per il debug
+    print(f"Richiesta utente con ID: {user_id}")
+
+    # Ottieni il riferimento al documento dell'utente
     user_ref = db.collection('osteoarthritiis-db').document(user_id)
+    
+    # Ottieni i dati del documento
     user_data = user_ref.get()
+
+    # Verifica se il documento esiste
     if user_data.exists:
+        # Restituisce i dati dell'utente
         return jsonify(user_data.to_dict()), 200
     else:
+        # Se il documento non esiste, restituisce un errore 404
+        print(f"Utente con ID {user_id} non trovato.")
         return jsonify({"error": "User not found"}), 404
-
 
 
 
@@ -385,25 +395,6 @@ def verify_email(uid):
     except auth.UserNotFoundError:
         return jsonify({"error": "Utente non trovato"}), 404
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-
-
-@app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
-def get_user_radiographs(patient_id):
-    try:
-        # Recupera le radiografie per il paziente specificato
-        radiographs_ref = db.collection('radiographs').where('patientId', '==', patient_id).stream()
-
-        radiographs = []
-        for radiograph in radiographs_ref:
-            radiographs.append(radiograph.to_dict())
-
-        return jsonify(radiographs), 200
-    
-    except Exception as e:
-        print("Errore nel recupero delle radiografie:", str(e))
         return jsonify({"error": str(e)}), 500
     
 

@@ -978,10 +978,11 @@ def send_notification():
         patient_id = data.get('patientId')
         message = data.get('message')
         date = data.get('date')
-        time = data.get('time')  
+        time = data.get('time')
+        sent_at = data.get('sentAt')  # Recupera il campo 'sentAt' dal frontend
 
         # Validazione dei dati
-        if not patient_id or not message or not date or not time:
+        if not patient_id or not message or not date or not time or not sent_at:
             return jsonify({"error": "Dati incompleti"}), 400
 
         # Salva la notifica nel database Firestore
@@ -989,8 +990,9 @@ def send_notification():
             'patientId': patient_id,
             'message': message,
             'date': date,
-            'time': time,  
-            'isRead': False 
+            'time': time,
+            'sentAt': sent_at,  # Aggiunge il campo 'sentAt'
+            'isRead': False
         })
 
         return jsonify({"message": "Notifica inviata con successo"}), 200

@@ -311,6 +311,30 @@ def decrement_attempts():
     return jsonify({"message": "Attempts decremented", "loginAttemptsLeft": attempts_left}), 200
 
 
+@app.route('/get-attempts-left', methods=['POST'])
+def get_attempts_left():
+    data = request.json
+    email = data.get('email')
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    # Recupera il documento dell'utente da Firestore cercando per email
+    user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
+
+    user_data = None
+    uid = None
+    for user_doc in user_query:
+        user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
+        uid = user_doc.id  # Ottieni l'ID del documento
+
+    if user_data is None:
+        print("Non trovo nessun utente")
+        return jsonify({"error": "User not found"}), 404
+
+    attempts_left = user_data.get('loginAttemptsLeft', 0)
+
+    return jsonify({"loginAttemptsLeft": attempts_left}), 200
 
 
 

@@ -83,7 +83,7 @@ def home():
     return jsonify({"message": "Welcome to the API!"})
 
 def get_user_data_from_database(uid):
-    user_ref = db.collection('osteoarthritiis-db').document(uid)
+    user_ref = db.collection('users').document(uid)
     user_data = user_ref.get()
     if user_data.exists:
         return user_data.to_dict()
@@ -152,7 +152,7 @@ def register():
             user_data['DoctorRef'] = data['doctorID']
 
         # Salva i dati nella collezione 'utenti'
-        db.collection('osteoarthritiis-db').document(user.uid).set(user_data)
+        db.collection('users').document(user.uid).set(user_data)
 
         # Genera il link di verifica
         verification_link = f"http://34.122.99.160:8080/verify-email/{user.uid}"
@@ -186,7 +186,7 @@ def login():
         # Recupera l'utente da Firebase
         user = auth.get_user(uid)
 
-        user_doc = db.collection('osteoarthritiis-db').document(uid).get()
+        user_doc = db.collection('users').document(uid).get()
 
         if not user_doc.exists:
             return jsonify({"error": "User data not found in Firestore"}), 404
@@ -223,7 +223,7 @@ def get_user(user_id):
     print(f"Richiesta utente con ID: {user_id}")
 
     # Ottieni il riferimento al documento dell'utente
-    user_ref = db.collection('osteoarthritiis-db').document(user_id)
+    user_ref = db.collection('users').document(user_id)
     
     # Ottieni i dati del documento
     user_data = user_ref.get()
@@ -246,7 +246,7 @@ def update_user():
     updates = {key: value for key, value in data.items() if key != 'userId'}  # Filtro per escludere l'ID utente
 
     try:
-        user_ref = db.collection('osteoarthritiis-db').document(user_id)
+        user_ref = db.collection('users').document(user_id)
         user_ref.update(updates)  # Aggiorna i dati nel database
 
         return jsonify({"message": "Dati aggiornati con successo!"}), 200
@@ -289,7 +289,7 @@ def decrement_attempts():
         return jsonify({"error": "Email is required"}), 400
 
     # Recupera il documento dell'utente da Firestore cercando per email
-    user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
+    user_query = db.collection('users').where('email', '==', email).stream()
 
     user_data = None
     uid = None
@@ -305,7 +305,7 @@ def decrement_attempts():
     attempts_left = user_data.get('loginAttemptsLeft', 0)
 
     if attempts_left > 0:
-        db.collection('osteoarthritiis-db').document(uid).update({
+        db.collection('users').document(uid).update({
             'loginAttemptsLeft': attempts_left - 1
         })
         attempts_left -= 1  # Decrementa il valore per la risposta
@@ -322,7 +322,7 @@ def get_attempts_left():
         return jsonify({"error": "Email is required"}), 400
 
     # Recupera il documento dell'utente da Firestore cercando per email
-    user_query = db.collection('osteoarthritiis-db').where('email', '==', email).stream()
+    user_query = db.collection('users').where('email', '==', email).stream()
 
     user_data = None
     uid = None
@@ -342,7 +342,7 @@ def get_attempts_left():
 def get_doctors():
     try:
         # Recupera tutti gli utenti con il ruolo 'doctor' dal database Firestore
-        doctors_ref = db.collection('osteoarthritiis-db').where('role', '==', 'doctor').stream()
+        doctors_ref = db.collection('users').where('role', '==', 'doctor').stream()
         
         doctors = []
         for doctor in doctors_ref:
@@ -361,7 +361,7 @@ def get_doctors():
 def get_patients():
     try:
         # Recupera tutti gli utenti con il ruolo 'patient' dal database Firestore
-        patients_ref = db.collection('osteoarthritiis-db').where('role', '==', 'patient').stream()
+        patients_ref = db.collection('users').where('role', '==', 'patient').stream()
         
         patients = []
         for patient in patients_ref:
@@ -381,7 +381,7 @@ def get_patients():
 def get_patients_from_doctor(doctor_id):
     try:
         # Recupera tutti i pazienti associati al dottore corrente in Firestore
-        patients_ref = db.collection('osteoarthritiis-db').where('DoctorRef', '==', doctor_id).stream()
+        patients_ref = db.collection('users').where('DoctorRef', '==', doctor_id).stream()
 
         patients = []
         for patient in patients_ref:
@@ -468,7 +468,7 @@ def reset_password():
 
 
         try:
-            db.collection('osteoarthritiis-db').document(uid).update({
+            db.collection('users').document(uid).update({
                 'loginAttemptsLeft': 6
             })
         except Exception as e:
@@ -1023,7 +1023,7 @@ def predict():
 def get_patient_information(uid):
     try:
         # Recupera il documento del paziente dal database Firestore
-        patient_ref = db.collection('osteoarthritiis-db').document(uid)
+        patient_ref = db.collection('users').document(uid)
         patient = patient_ref.get()
 
         if patient.exists:

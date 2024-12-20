@@ -28,9 +28,11 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Configura CORS per permettere l'accesso da 'http://localhost:8080'
-#CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Configurazione CORS
+# LOCALE
+# CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}}) 
+# VM
+CORS(app, resources={r"/*": {"origins": "http://34.121.167.35:8080"}})
 
 # Percorso dei file delle credenziali
 basedir = os.path.abspath(os.path.dirname(__file__))

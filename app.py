@@ -30,9 +30,9 @@ app = Flask(__name__)
 
 # Configurazione CORS
 # LOCALE
-# CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}}) 
+CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}}) 
 # VM
-CORS(app, resources={r"/*": {"origins": "http://34.121.167.35:8080"}})
+# CORS(app, resources={r"/*": {"origins": "http://34.122.99.160:8080"}})
 
 # Percorso dei file delle credenziali
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -71,7 +71,7 @@ def load_model_from_gcs(bucket_name, blob_name):
     return model
 
 # Nome del bucket e del file
-bucket_name = 'osteoarthritis-radiographs-archive'
+bucket_name = 'osteoarthritis-portal-archive'
 blob_name = 'MODELLO/pesi.h5'
 
 # Carica il modello direttamente dal bucket
@@ -436,7 +436,7 @@ def send_reset_email():
         # Recupera l'UID dell'utente dall'email
         user = auth.get_user_by_email(email)
 
-        verification_link = f"http://localhost:8080/reset-password/{user.uid}"
+        verification_link = f"http://34.122.99.160:8080/reset-password/{user.uid}"
         # Invia l'email di verifica
         subject = "Resetta la tua password"
         message = f"Per favore, resetta la tua password cliccando il seguente link: {verification_link}"
@@ -508,7 +508,7 @@ def get_user_radiographs(patient_id):
 def get_gcs_bucket():
     """Ottiene il bucket di Google Cloud Storage."""
     storage_client = storage.Client()
-    bucket_name = 'osteoarthritis-radiographs-archive'
+    bucket_name = 'osteoarthritis-portal-archive'
     print(f"Connessione al bucket: {bucket_name}")
     return storage_client.bucket(bucket_name)
 

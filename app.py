@@ -351,12 +351,16 @@ def get_doctors():
             doctor_data = doctor.to_dict()
             doctors.append(doctor_data)
 
+        if not doctors:
+            return jsonify({"message": "Nessun dottore trovato"}), 404
+
         # Restituisci la lista dei dottori come risposta JSON
         return jsonify(doctors), 200
     
     except Exception as e:
         print("Errore nel recupero dei dottori:", str(e))
         return jsonify({"error": str(e)}), 500
+
     
 
 @app.route('/api/patients', methods=['GET'])
@@ -370,12 +374,16 @@ def get_patients():
             patient_data = patient.to_dict()
             patients.append(patient_data)
 
+        if not patients:
+            return jsonify({"message": "Nessun paziente trovato"}), 404
+
         # Restituisci la lista dei pazienti come risposta JSON
         return jsonify(patients), 200
     
     except Exception as e:
-        print("Errore nel recupero dei dottori:", str(e))
+        print("Errore nel recupero dei pazienti:", str(e))
         return jsonify({"error": str(e)}), 500
+
 
 
 
@@ -390,7 +398,10 @@ def get_patients_from_doctor(doctor_id):
             patient_data = patient.to_dict()
             user = auth.get_user(patient_data['userId'])
             if user.email_verified:
-              patients.append(patient_data)
+                patients.append(patient_data)
+
+        if not patients:
+            return jsonify({"message": "Nessun paziente trovato per il dottore selezionato"}), 404
 
         # Restituisci la lista dei pazienti come risposta JSON
         return jsonify(patients), 200
@@ -398,6 +409,7 @@ def get_patients_from_doctor(doctor_id):
     except Exception as e:
         print(f"Errore nel recupero dei pazienti per il dottore {doctor_id}: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
 
 
 
@@ -433,22 +445,31 @@ def send_reset_email():
         if not email:
             return jsonify({"error": "L'email è obbligatoria"}), 400
 
-        # Recupera l'UID dell'utente dall'email
-        user = auth.get_user_by_email(email)
+        try:
+            # Recupera l'UID dell'utente dall'email
+            user = auth.get_user_by_email(email)
+        except Exception as e:
+            # Gestione dell'errore quando l'utente non è trovato
+            return jsonify({"error": "Errore durante l'invio del link di reset: User not found"}), 500
 
         verification_link = f"http://34.122.99.160:8080/reset-password/{user.uid}"
         # Invia l'email di verifica
         subject = "Resetta la tua password"
         message = f"Per favore, resetta la tua password cliccando il seguente link: {verification_link}"
-        send_email(email, subject, message)
+        
+        try:
+            send_email(email, subject, message)
+        except Exception as e:
+            # Gestione dell'errore durante l'invio dell'email
+            return jsonify({"error": "Errore durante l'invio del link di reset: " + str(e)}), 500
 
         print("uid letto + " + user.uid)
 
         return jsonify({"message": "Email di reset inviata con successo"}), 200
 
     except Exception as e:
-        print("Errore durante l'invio del link di reset:", str(e))
-        return jsonify({"error": str(e)}), 500
+        # Gestione dell'errore generico
+        return jsonify({"error": f"Errore durante l'invio del link di reset: {str(e)}"}), 500
 
 @app.route('/reset-password', methods=['POST'])
 def reset_password():

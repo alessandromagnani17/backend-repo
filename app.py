@@ -79,18 +79,9 @@ model = load_model_from_gcs(bucket_name, blob_name)
 
 
 
-
 @app.route('/')
 def home():
     return jsonify({"message": "Welcome to the API!"})
-
-def get_user_data_from_database(uid):
-    user_ref = db.collection('users').document(uid)
-    user_data = user_ref.get()
-    if user_data.exists:
-        return user_data.to_dict()
-    else:
-        return None  # Se l'utente non esiste
 
 
 def send_email(email, subject, msg):
@@ -507,23 +498,6 @@ def reset_password():
     except Exception as e:
         # Gestione errori generici
         return jsonify({"error": f"Errore: {str(e)}"}), 500
-
-
-@app.route('/patients/<string:patient_id>/radiographs', methods=['GET'])
-def get_user_radiographs(patient_id):
-    try:
-        # Recupera le radiografie per il paziente specificato
-        radiographs_ref = db.collection('radiographs').where('patientId', '==', patient_id).stream()
-
-        radiographs = []
-        for radiograph in radiographs_ref:
-            radiographs.append(radiograph.to_dict())
-
-        return jsonify(radiographs), 200
-    
-    except Exception as e:
-        print("Errore nel recupero delle radiografie:", str(e))
-        return jsonify({"error": str(e)}), 500
     
 
 def get_gcs_bucket():
@@ -1069,25 +1043,6 @@ def get_patient_information(uid):
     except Exception as e:
         print("Errore nel recupero delle informazioni del paziente:", str(e))
         return None  # Oppure una tupla di valori vuoti in caso di errore
-
-
-@app.route('/images/<path:image_name>', methods=['GET'])
-def get_image(image_name):
-    try:
-        bucket = get_gcs_bucket()
-        blob = bucket.blob(image_name)
-
-        # Scarica il contenuto dell'immagine come bytes
-        image_data = blob.download_as_bytes()
-
-        # Crea un oggetto file in memoria per l'immagine
-        image_stream = io.BytesIO(image_data)
-
-        # Invia l'immagine come file di risposta
-        return send_file(image_stream, mimetype='image/png')  # Specifica il mimetype corretto se diverso
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/notifications', methods=['POST'])

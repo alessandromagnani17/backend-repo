@@ -22,6 +22,7 @@ from tensorflow.keras.models import load_model
 from io import BytesIO
 from datetime import datetime
 import h5py
+from firestore_utils import FirestoreManager
 
 
 load_dotenv()
@@ -46,6 +47,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_cred_path
 cred = credentials.Certificate(firebase_cred_path)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+firestore_manager = FirestoreManager(db)
 
 # Crea il client di Google Cloud Storage
 storage_client = storage.Client()
@@ -112,19 +114,15 @@ def register():
     print("Dati ricevuti per la registrazione:", data)
 
     try:
-        # Crea l'utente in Firebase Authentication
-        user = auth.create_user(
-            email=data['email'],
-            password=data['password'],
-            display_name=data.get('username'),  # Username
-            disabled=False
-        )
-
-        # Dati comuni tra dottori e pazienti
+        # Utilizzo del manager per creare l'utente
+        auth_data = {
+            'email': data['email'],
+            'password': data['password'],
+            'username': data.get('username')
+        }
+        
         user_data = {
-            "email": data['email'],
             "username": data.get('username'),
-            "userId": user.uid,
             "email": data['email'],
             "name": data['nome'],
             "family_name": data['cognome'],
@@ -134,31 +132,28 @@ def register():
             "address": data['address'],
             "cap_code": data['cap_code'],
             "tax_code": data['tax_code'],
-            "role": data['role'],
-            "loginAttemptsLeft": 6
+            "role": data['role']
         }
 
-        # Se l'utente è un dottore, aggiungi anche il doctorID
+        # Aggiungi doctorID in base al ruolo
         if data['role'] == 'doctor':
             user_data['doctorID'] = data['doctorID']
         else:
             user_data['DoctorRef'] = data['doctorID']
 
-        # Salva i dati nella collezione 'utenti'
-        db.collection('users').document(user.uid).set(user_data)
+        uid, created_user = firestore_manager.create_user(auth_data, user_data)
 
         # Genera il link di verifica
-        verification_link = f"http://34.122.99.160:8080/verify-email/{user.uid}"
-        # Invia l'email di verifica
+        verification_link = f"http://34.122.99.160:8080/verify-email/{uid}"
         subject = "Verifica il tuo indirizzo email"
         message = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {verification_link}"
         send_email(data['email'], subject, message)
 
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",
-            "response": user_data
+            "response": created_user
         }), 200
-    
+
     except Exception as e:
         print("Errore nella registrazione:", str(e))
         return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
@@ -172,81 +167,291 @@ def login():
         return jsonify({"error": "ID token is required"}), 400
 
     try:
-        # Verifica il token ID ricevuto dal client
         decoded_token = auth.verify_id_token(data['idToken'])
-        uid = decoded_token['uid']  # UID dell'utente autenticato
-
-        # Recupera l'utente da Firebase
+        uid = decoded_token['uid']
         user = auth.get_user(uid)
-
-        user_doc = db.collection('users').document(uid).get()
-
-        if not user_doc.exists:
+        
+        # Usa il manager per ottenere i dati dell'utente
+        user_data = firestore_manager.get_document('users', uid)
+        
+        if not user_data:
             return jsonify({"error": "User data not found in Firestore"}), 404
 
-        user_data = user_doc.to_dict()
-
-        attempts_left = user_data.get('loginAttemptsLeft', 0)
-
-        # Aggiungo attributi di autenticazione a quelli della collezione su firestore
+        # Aggiungi attributi di autenticazione
         user_data['uid'] = user.uid
         user_data['email'] = user.email
-        user_data['attemptsLeft'] = attempts_left
+        user_data['attemptsLeft'] = user_data.get('loginAttemptsLeft', 0)
 
         return jsonify({
             "message": "Login successful",
-            "user": user_data,  
+            "user": user_data
         }), 200
 
     except firebase_admin.auth.InvalidIdTokenError as e:
-        print("Token ID non valido:", e)  # Stampa se il token ID non è valido
         return jsonify({"error": "Invalid ID token", "details": str(e)}), 401
-    except firebase_admin.auth.UserNotFoundError as e:
-        print("Utente non trovato per UID:", uid, "Errore:", e)  # Stampa se l'utente non è trovato
-        return jsonify({"error": "User not found", "details": str(e)}), 404
     except Exception as e:
-        print("Errore nel login:", str(e))  # Stampa l'errore generico
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
-
 
 
 @app.route('/api/get_user/<user_id>', methods=['GET'])
 def get_user(user_id):
-    # Log dell'ID utente per il debug
     print(f"Richiesta utente con ID: {user_id}")
-
-    # Ottieni il riferimento al documento dell'utente
-    user_ref = db.collection('users').document(user_id)
     
-    # Ottieni i dati del documento
-    user_data = user_ref.get()
-
-    # Verifica se il documento esiste
-    if user_data.exists:
-        # Restituisce i dati dell'utente
-        return jsonify(user_data.to_dict()), 200
+    user_data = firestore_manager.get_document('users', user_id)
+    
+    if user_data:
+        return jsonify(user_data), 200
     else:
-        # Se il documento non esiste, restituisce un errore 404
         print(f"Utente con ID {user_id} non trovato.")
         return jsonify({"error": "User not found"}), 404
-
 
 
 @app.route('/update_user', methods=['PATCH'])
 def update_user():
     data = request.json
-    user_id = data.get('userId')  # Ottieni l'ID utente dal payload
-    updates = {key: value for key, value in data.items() if key != 'userId'}  # Filtro per escludere l'ID utente
-
+    user_id = data.pop('userId')  # Rimuovi userId dai dati da aggiornare
+    
     try:
-        user_ref = db.collection('users').document(user_id)
-        user_ref.update(updates)  # Aggiorna i dati nel database
-
-        return jsonify({"message": "Dati aggiornati con successo!"}), 200
+        success = firestore_manager.update_document('users', user_id, data)
+        if success:
+            return jsonify({"message": "Dati aggiornati con successo!"}), 200
+        return jsonify({"error": "Errore durante l'aggiornamento dei dati."}), 400
     except Exception as e:
-        print("Errore nell'aggiornamento dei dati:", str(e))
-        return jsonify({"error": str(e), "message": "Errore durante l'aggiornamento dei dati."}), 400
+        return jsonify({"error": str(e)}), 400
 
+
+@app.route('/decrement-attempts', methods=['POST'])
+def decrement_attempts():
+    data = request.json
+    email = data.get('email')
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    # Usa il manager per trovare l'utente tramite email
+    users = firestore_manager.query_documents('users', [('email', '==', email)])
+    
+    if not users:
+        return jsonify({"error": "User not found"}), 404
+
+    user_data = users[0]
+    user_id = user_data['id']
+    
+    # Usa il manager per decrementare i tentativi
+    success = firestore_manager.update_login_attempts(user_id, reset=False)
+    
+    if success:
+        return jsonify({
+            "message": "Attempts decremented",
+            "loginAttemptsLeft": max(0, user_data.get('loginAttemptsLeft', 0) - 1)
+        }), 200
+    return jsonify({"error": "Failed to update attempts"}), 400
+
+
+@app.route('/get-attempts-left', methods=['POST'])
+def get_attempts_left():
+    data = request.json
+    email = data.get('email')
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    # Usa il manager per trovare l'utente tramite email
+    users = firestore_manager.query_documents('users', [('email', '==', email)])
+    
+    if not users:
+        return jsonify({"error": "User not found"}), 404
+
+    attempts_left = users[0].get('loginAttemptsLeft', 0)
+    return jsonify({"loginAttemptsLeft": attempts_left}), 200
+
+
+@app.route('/api/doctors', methods=['GET'])
+def get_doctors():
+    try:
+        doctors = firestore_manager.get_users_by_role('doctor')
+        
+        if not doctors:
+            return jsonify({"message": "Nessun dottore trovato"}), 404
+
+        return jsonify(doctors), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/patients', methods=['GET'])
+def get_patients():
+    try:
+        patients = firestore_manager.get_users_by_role('patient')
+        
+        if not patients:
+            return jsonify({"message": "Nessun paziente trovato"}), 404
+
+        return jsonify(patients), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/<doctor_id>/patients', methods=['GET'])
+def get_patients_from_doctor(doctor_id):
+    try:
+        patients = firestore_manager.get_doctor_patients(doctor_id)
+        
+        # Filtra i pazienti verificati
+        verified_patients = []
+        for patient in patients:
+            user = auth.get_user(patient['userId'])
+            if user.email_verified:
+                verified_patients.append(patient)
+
+        if not verified_patients:
+            return jsonify({"message": "Nessun paziente trovato per il dottore selezionato"}), 404
+
+        return jsonify(verified_patients), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    try:
+        data = request.json
+        uid = data.get('uid')
+        new_password = data.get('password')
+
+        if not uid or not new_password:
+            return jsonify({"error": "UID e password sono obbligatori."}), 400
+
+        # Aggiorna la password
+        auth.update_user(uid, password=new_password)
+        
+        # Reset tentativi di login
+        success = firestore_manager.update_login_attempts(uid, reset=True)
+        
+        if not success:
+            return jsonify({"error": "Errore durante l'aggiornamento dei tentativi di login"}), 500
+
+        return jsonify({"message": "Password aggiornata con successo."}), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Errore: {str(e)}"}), 500
+
+
+@app.route('/api/operations', methods=['POST'])
+def add_operation():
+    try:
+        data = request.json
+        print("Dati ricevuti:", data)
+        
+        operation_data = {
+            "doctorId": data['doctorId'],
+            "patientId": data['patientId'],
+            "operationDate": data['operationDate'],
+            "description": data.get('description', '')
+        }
+
+        _, created_operation = firestore_manager.create_operation(operation_data)
+
+        return jsonify({
+            "message": "Operazione pianificata",
+            "operation": created_operation
+        }), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": "Errore interno del server"}), 500
+
+
+@app.route('/api/patients/<patient_id>/operations', methods=['GET'])
+def get_patient_operations(patient_id):
+    try:
+        operations = firestore_manager.query_documents(
+            'operations',
+            [('patientId', '==', patient_id)]
+        )
+        return jsonify(operations), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def get_patient_information(uid):
+    """
+    Recupera le informazioni principali di un paziente dal database.
+    
+    Args:
+        uid: ID univoco del paziente
+        
+    Returns:
+        Tupla contenente (nome, cognome, data di nascita, codice fiscale, indirizzo, CAP, genere)
+        o None se il paziente non viene trovato o in caso di errore
+    """
+    try:
+        # Usa il manager per recuperare i dati del paziente
+        patient_data = firestore_manager.get_document('users', uid)
+        
+        if patient_data:
+            # Estrai i dettagli del paziente usando il metodo get con valori di default
+            return (
+                patient_data.get("name", ""),
+                patient_data.get("family_name", ""),
+                patient_data.get("birthdate", ""),
+                patient_data.get("tax_code", ""),
+                patient_data.get("address", ""),
+                patient_data.get("cap_code", ""),
+                patient_data.get("gender", "")
+            )
+        else:
+            print(f"Nessun paziente trovato con UID: {uid}")
+            return None
+
+    except Exception as e:
+        print("Errore nel recupero delle informazioni del paziente:", str(e))
+        return None
+    
+
+@app.route('/api/notifications', methods=['POST'])
+def send_notification():
+    try:
+        data = request.json
+        notification_data = {
+            'patientId': data['patientId'],
+            'message': data['message'],
+            'date': data['date'],
+            'time': data['time'],
+            'sentAt': data['sentAt']
+        }
+
+        _, created_notification = firestore_manager.create_notification(notification_data)
+        return jsonify({"message": "Notifica inviata con successo"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/notifications', methods=['GET'])
+def get_notifications():
+    try:
+        patient_id = request.args.get('patientId')
+        
+        if not patient_id:
+            return jsonify({"error": "patientId è richiesto"}), 400
+        
+        notifications = firestore_manager.get_user_notifications(patient_id)
+        return jsonify({"notifications": notifications}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/notifications/<notification_id>', methods=['PATCH'])
+def mark_notification_as_read(notification_id):
+    try:
+        success = firestore_manager.mark_notification_read(notification_id)
+        if success:
+            return jsonify({"message": "Notifica segnata come letta"}), 200
+        return jsonify({"error": "Notifica non trovata"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/check-email-verification', methods=['POST'])
@@ -272,134 +477,6 @@ def check_email_verification():
         print("Errore durante la verifica dell'email:", str(e))
         return jsonify({"error": "Internal server error"}), 500
 
-
-@app.route('/decrement-attempts', methods=['POST'])
-def decrement_attempts():
-    data = request.json
-    email = data.get('email')
-
-    if not email:
-        return jsonify({"error": "Email is required"}), 400
-
-    # Recupera il documento dell'utente da Firestore cercando per email
-    user_query = db.collection('users').where('email', '==', email).stream()
-
-    user_data = None
-    uid = None
-    for user_doc in user_query:
-        user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
-        uid = user_doc.id  # Ottieni l'ID del documento
-
-    if user_data is None:
-        print("Non trovo nessun utente")
-        return jsonify({"error": "User not found"}), 404
-
-    # Decrementa i tentativi
-    attempts_left = user_data.get('loginAttemptsLeft', 0)
-
-    if attempts_left > 0:
-        db.collection('users').document(uid).update({
-            'loginAttemptsLeft': attempts_left - 1
-        })
-        attempts_left -= 1  # Decrementa il valore per la risposta
-
-    return jsonify({"message": "Attempts decremented", "loginAttemptsLeft": attempts_left}), 200
-
-
-@app.route('/get-attempts-left', methods=['POST'])
-def get_attempts_left():
-    data = request.json
-    email = data.get('email')
-
-    if not email:
-        return jsonify({"error": "Email is required"}), 400
-
-    # Recupera il documento dell'utente da Firestore cercando per email
-    user_query = db.collection('users').where('email', '==', email).stream()
-
-    user_data = None
-    uid = None
-    for user_doc in user_query:
-        user_data = user_doc.to_dict()  # Se trovi l'utente, ottieni i suoi dati
-        uid = user_doc.id  # Ottieni l'ID del documento
-
-    if user_data is None:
-        print("Non trovo nessun utente")
-        return jsonify({"error": "User not found"}), 404
-
-    attempts_left = user_data.get('loginAttemptsLeft', 0)
-
-    return jsonify({"loginAttemptsLeft": attempts_left}), 200
-
-@app.route('/api/doctors', methods=['GET'])
-def get_doctors():
-    try:
-        # Recupera tutti gli utenti con il ruolo 'doctor' dal database Firestore
-        doctors_ref = db.collection('users').where('role', '==', 'doctor').stream()
-        
-        doctors = []
-        for doctor in doctors_ref:
-            doctor_data = doctor.to_dict()
-            doctors.append(doctor_data)
-
-        if not doctors:
-            return jsonify({"message": "Nessun dottore trovato"}), 404
-
-        # Restituisci la lista dei dottori come risposta JSON
-        return jsonify(doctors), 200
-    
-    except Exception as e:
-        print("Errore nel recupero dei dottori:", str(e))
-        return jsonify({"error": str(e)}), 500
-
-    
-
-@app.route('/api/patients', methods=['GET'])
-def get_patients():
-    try:
-        # Recupera tutti gli utenti con il ruolo 'patient' dal database Firestore
-        patients_ref = db.collection('users').where('role', '==', 'patient').stream()
-        
-        patients = []
-        for patient in patients_ref:
-            patient_data = patient.to_dict()
-            patients.append(patient_data)
-
-        if not patients:
-            return jsonify({"message": "Nessun paziente trovato"}), 404
-
-        # Restituisci la lista dei pazienti come risposta JSON
-        return jsonify(patients), 200
-    
-    except Exception as e:
-        print("Errore nel recupero dei pazienti:", str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-
-
-@app.route('/api/<doctor_id>/patients', methods=['GET'])
-def get_patients_from_doctor(doctor_id):
-    try:
-        # Recupera tutti i pazienti associati al dottore corrente in Firestore
-        patients_ref = db.collection('users').where('DoctorRef', '==', doctor_id).stream()
-
-        patients = []
-        for patient in patients_ref:
-            patient_data = patient.to_dict()
-            user = auth.get_user(patient_data['userId'])
-            if user.email_verified:
-                patients.append(patient_data)
-
-        if not patients:
-            return jsonify({"message": "Nessun paziente trovato per il dottore selezionato"}), 404
-
-        # Restituisci la lista dei pazienti come risposta JSON
-        return jsonify(patients), 200
-
-    except Exception as e:
-        print(f"Errore nel recupero dei pazienti per il dottore {doctor_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
 
 
 
@@ -462,42 +539,6 @@ def send_reset_email():
         # Gestione dell'errore generico
         return jsonify({"error": f"Errore durante l'invio del link di reset: {str(e)}"}), 500
 
-@app.route('/reset-password', methods=['POST'])
-def reset_password():
-    try:
-        # Ottieni i dati dalla richiesta
-        data = request.json
-        uid = data.get('uid')
-        new_password = data.get('password')
-
-        # Validazione input
-        if not uid or not new_password:
-            return jsonify({"error": "UID e password sono obbligatori."}), 400
-
-        # Aggiorna la password dell'utente
-        try:
-            auth.update_user(uid, password=new_password)
-        except Exception as e:
-            return jsonify({"error": f"Errore durante l'aggiornamento della password: {str(e)}"}), 500
-
-
-        try:
-            db.collection('users').document(uid).update({
-                'loginAttemptsLeft': 6
-            })
-        except Exception as e:
-            return jsonify({"error": f"Errore durante l'aggiornamento dei tentativi di login: {str(e)}"}), 500
-
-
-        return jsonify({"message": "Password aggiornata con successo."}), 200
-
-    except firebase_admin.exceptions.FirebaseError as e:
-        # Gestione errori Firebase
-        return jsonify({"error": f"Errore Firebase: {str(e)}"}), 500
-
-    except Exception as e:
-        # Gestione errori generici
-        return jsonify({"error": f"Errore: {str(e)}"}), 500
     
 
 def get_gcs_bucket():
@@ -547,83 +588,6 @@ def get_patient_radiographs(patient_id):
         print(f"[ERROR] Errore durante il recupero delle radiografie: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-
-@app.route('/api/operations', methods=['POST'])
-def add_operation():
-    try:
-        # Ottieni i dati dalla richiesta
-        data = request.json
-        
-        # Log dei dati ricevuti per debug
-        print("Dati ricevuti:", data)
-        
-        doctor_id = data.get('doctorId')
-        patient_id = data.get('patientId')
-        operation_date = data.get('operationDate')
-        description = data.get('description')  # Aggiungi descrizione se prevista
-
-        # Validazione dei dati richiesti
-        if not doctor_id or not patient_id or not operation_date:
-            return jsonify({"error": "Dati mancanti (doctorId, patientId, operationDate)"}), 400
-
-        # Validazione del formato della data
-        try:
-            operation_date_parsed = datetime.fromisoformat(operation_date)
-        except ValueError:
-            return jsonify({"error": "Formato data non valido (usa ISO 8601: YYYY-MM-DD)"}), 400
-
-        # Controllo che la data non sia nel passato
-        if operation_date_parsed < datetime.now():
-            return jsonify({"error": "La data deve essere futura"}), 400
-
-        # Prepara i dati da salvare
-        operations_ref = db.collection('operations')
-        operation_data = {
-            "doctorId": doctor_id,
-            "patientId": patient_id,
-            "operationDate": operation_date_parsed.isoformat(),
-            "description": description or "",  # Descrizione opzionale
-            "notificationStatus": "pending",
-            "createdAt": datetime.now().isoformat(),  # Timestamp della creazione
-        }
-
-        # Aggiungi l'operazione nel database
-        operation_ref = operations_ref.add(operation_data)
-
-        # Restituisci il risultato
-        return jsonify({
-            "message": "Operazione pianificata",
-            "id": operation_ref[1].id,
-            "operation": operation_data  # Includi i dati salvati come feedback
-        }), 201
-    except Exception as e:
-        # Log dell'errore per debug
-        print("Errore durante la pianificazione dell'operazione:", str(e))
-        return jsonify({"error": "Errore interno del server"}), 500
-
-
-
-# Rotta per recuperare le operazioni di un paziente
-@app.route('/api/patients/<patient_id>/operations', methods=['GET'])
-def get_patient_operations(patient_id):
-    try:
-        # Recupera i documenti dalla collezione "operations" dove patientId è uguale al patient_id
-        operations_ref = db.collection('operations')
-        operations_query = operations_ref.where('patientId', '==', patient_id)
-        operations = operations_query.stream()
-
-        # Crea una lista con i dati delle operazioni
-        operations_list = []
-        for operation in operations:
-            operation_data = operation.to_dict()
-            operation_data['id'] = operation.id  # Aggiungi l'ID del documento
-            operations_list.append(operation_data)
-
-        # Restituisce le operazioni trovate
-        return jsonify(operations_list), 200
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 
@@ -1017,106 +981,6 @@ def predict():
         print(f"Debug: Errore durante la predizione - {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-def get_patient_information(uid):
-    try:
-        # Recupera il documento del paziente dal database Firestore
-        patient_ref = db.collection('users').document(uid)
-        patient = patient_ref.get()
-
-        if patient.exists:
-            patient_data = patient.to_dict()
-            
-            # Estrai i dettagli del paziente
-            name = patient_data.get("name", "")
-            surname = patient_data.get("family_name", "")
-            birthdate = patient_data.get("birthdate", "")
-            tax_code = patient_data.get("tax_code", "")
-            address = patient_data.get("address", "")
-            cap_code = patient_data.get("cap_code", "")
-            gender = patient_data.get("gender", "")
-            
-            return name, surname, birthdate, tax_code, address, cap_code, gender
-        else:
-            print(f"Nessun paziente trovato con UID: {uid}")
-            return None  # Oppure una tupla di valori vuoti se preferisci
-
-    except Exception as e:
-        print("Errore nel recupero delle informazioni del paziente:", str(e))
-        return None  # Oppure una tupla di valori vuoti in caso di errore
-
-
-@app.route('/api/notifications', methods=['POST'])
-def send_notification():
-    try:
-        data = request.get_json()
-        patient_id = data.get('patientId')
-        message = data.get('message')
-        date = data.get('date')
-        time = data.get('time')
-        sent_at = data.get('sentAt')  # Recupera il campo 'sentAt' dal frontend
-
-        # Validazione dei dati
-        if not patient_id or not message or not date or not time or not sent_at:
-            return jsonify({"error": "Dati incompleti"}), 400
-
-        # Salva la notifica nel database Firestore
-        db.collection('notifications').add({
-            'patientId': patient_id,
-            'message': message,
-            'date': date,
-            'time': time,
-            'sentAt': sent_at,  # Aggiunge il campo 'sentAt'
-            'isRead': False
-        })
-
-        return jsonify({"message": "Notifica inviata con successo"}), 200
-
-    except Exception as e:
-        print("Errore durante l'invio della notifica:", str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/notifications', methods=['GET'])
-def get_notifications():
-    try:
-        # Ottieni il parametro patientId dalla query string
-        patient_id = request.args.get('patientId')
-        
-        print("Received patientId:", patient_id)  # Stampa di debug
-        
-        # Verifica se patientId è presente
-        if not patient_id:
-            print("Errore: patientId non fornito")
-            return jsonify({"error": "patientId è richiesto"}), 400
-        
-        # Recupera le notifiche dal database Firestore (oppure la logica che usi)
-        notifications_ref = db.collection('notifications').where('patientId', '==', patient_id).stream()
-        
-        notifications = []
-        for notification in notifications_ref:
-            notification_data = notification.to_dict()
-            notification_data['id'] = notification.id  # Aggiungi l'ID del documento
-            print("NotificationID: ", notification.id)
-            notifications.append(notification_data)
-
-        print("Notifications found:", notifications)  # Stampa di debug
-
-        return jsonify({"notifications": notifications}), 200
-
-    except Exception as e:
-        print("Errore durante il recupero delle notifiche:", str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/notifications/<notification_id>', methods=['PATCH'])
-def mark_notification_as_read(notification_id):
-    try:
-        notification_ref = db.collection('notifications').document(notification_id)
-        notification_ref.update({'isRead': True})
-        return jsonify({"message": "Notifica segnata come letta"}), 200
-    except Exception as e:
-        print("Errore durante l'aggiornamento della notifica:", str(e))
-        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

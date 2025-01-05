@@ -11,51 +11,33 @@ import io
 import requests
 from io import BytesIO
 from datetime import datetime
-from firestore_utils import FirestoreManager
-from gcs_utils import GCSManager, GCSManagerException
-from model_utils import ModelManager
-from email_utils import EmailManager
+from utils.gcs_utils import GCSManagerException
+from config.app_config import AppConfig
+from factories.manager_factory import ManagerFactory
 import cv2
 
 
 load_dotenv()
 
+# Set Google Cloud credentials environment variable
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = AppConfig.GCS_CRED_PATH
+
 app = Flask(__name__)
 
-# Configurazione CORS
-# LOCALE
-CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}}) 
-# VM
-# CORS(app, resources={r"/*": {"origins": "http://34.122.99.160:8080"}})
+# Configure CORS using AppConfig
+CORS(app, resources={r"/*": {"origins": AppConfig.CORS_ORIGIN}})
 
-# Percorso dei file delle credenziali
-basedir = os.path.abspath(os.path.dirname(__file__))
-
-# Inizializza Firestore
-firebase_cred_path = os.path.join(basedir, 'config', 'firebase-adminsdk.json')
-cred = credentials.Certificate(firebase_cred_path)
+# Initialize Firebase Admin
+cred = credentials.Certificate(AppConfig.FIREBASE_CRED_PATH)
 firebase_admin.initialize_app(cred)
-db = firestore.client()
-firestore_manager = FirestoreManager(db)
 
-#Inizializza Google Cloud Storage
-gcs_cred_path = os.path.join(basedir, 'config', 'meta-geography-438711-r1-de4779cd8c73.json')
-
-# Imposta la variabile d'ambiente per le credenziali di Google Cloud Storage
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_cred_path
-
-# Inizializzazione del GCSManager
-gcs_manager = GCSManager('osteoarthritis-portal-archive')
-
-try:
-    model = gcs_manager.load_model('MODELLO/pesi.h5')
-except GCSManagerException as e:
-    print(f"Errore: {e}")
-
-
-model_manager = ModelManager(model)
-email_manager = EmailManager()
-
+# Initialize all managers using ManagerFactory
+managers = ManagerFactory.create_managers(AppConfig)
+firestore_manager = managers['firestore']
+gcs_manager = managers['gcs']
+model_manager = managers['model']
+email_manager = managers['email']
+    
 
 @app.route('/')
 def home():

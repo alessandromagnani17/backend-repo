@@ -2,27 +2,20 @@ from flask import Flask, send_file, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
-import boto3
-from botocore.exceptions import ClientError
-import jwt
 import firebase_admin
 from firebase_admin import credentials, auth, firestore, messaging
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from google.cloud import storage
 from google.oauth2 import service_account 
-import cv2
 import tensorflow as tf
-import numpy as np
-from tensorflow.keras.preprocessing import image
 import io
 import requests
-from tensorflow.keras.models import load_model
 from io import BytesIO
 from datetime import datetime
-import h5py
 from firestore_utils import FirestoreManager
+from gcs_utils import GCSManager, GCSManagerException
+from model_utils import ModelManager
+from email_utils import EmailManager
+import cv2
 
 
 load_dotenv()
@@ -37,76 +30,37 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}})
 
 # Percorso dei file delle credenziali
 basedir = os.path.abspath(os.path.dirname(__file__))
+
+# Inizializza Firestore
 firebase_cred_path = os.path.join(basedir, 'config', 'firebase-adminsdk.json')
-gcs_cred_path = os.path.join(basedir, 'config', 'meta-geography-438711-r1-de4779cd8c73.json')
-
-# Imposta la variabile d'ambiente per le credenziali di Google Cloud Storage
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_cred_path
-
-# Inizializza Firebase Admin
 cred = credentials.Certificate(firebase_cred_path)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 firestore_manager = FirestoreManager(db)
 
-# Crea il client di Google Cloud Storage
-storage_client = storage.Client()
+#Inizializza Google Cloud Storage
+gcs_cred_path = os.path.join(basedir, 'config', 'meta-geography-438711-r1-de4779cd8c73.json')
+
+# Imposta la variabile d'ambiente per le credenziali di Google Cloud Storage
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_cred_path
+
+# Inizializzazione del GCSManager
+gcs_manager = GCSManager('osteoarthritis-portal-archive')
+
+try:
+    model = gcs_manager.load_model('MODELLO/pesi.h5')
+except GCSManagerException as e:
+    print(f"Errore: {e}")
 
 
-# Funzione per scaricare e caricare i pesi dal bucket
-def load_model_from_gcs(bucket_name, blob_name):
-    # Inizializza il client e accedi al bucket
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-
-    # Scarica i dati in memoria
-    model_bytes = BytesIO()
-    blob.download_to_file(model_bytes)
-    model_bytes.seek(0)  # Riporta il puntatore all'inizio del file
-
-    # Usa Keras per caricare il modello direttamente dal buffer
-    with h5py.File(model_bytes, 'r') as h5file:
-        model = load_model(h5file)
-
-    print("Modello caricato correttamente dalla memoria!")
-    return model
-
-# Nome del bucket e del file
-bucket_name = 'osteoarthritis-portal-archive'
-blob_name = 'MODELLO/pesi.h5'
-
-# Carica il modello direttamente dal bucket
-model = load_model_from_gcs(bucket_name, blob_name)
-
+model_manager = ModelManager(model)
+email_manager = EmailManager()
 
 
 @app.route('/')
 def home():
     return jsonify({"message": "Welcome to the API!"})
 
-
-def send_email(email, subject, msg):
-    sender_email = "andyalemonta@gmail.com"  # Sostituisci con il tuo indirizzo email
-    sender_password = "vlpy jeea avjx feql"  # Sostituisci con l'App Password di Gmail
-
-    # Crea il messaggio
-    message = MIMEMultipart()
-    message["From"] = sender_email
-    message["To"] = email
-    message["Subject"] = subject
-
-    # Corpo dell'email
-    message.attach(MIMEText(msg, "plain"))
-
-    # Invia l'email
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()  # Sicurezza
-            server.login(sender_email, sender_password)  # Login
-            server.sendmail(sender_email, email, message.as_string())  # Invia l'email
-    except Exception as e:
-        print("Errore nell'invio dell'email:", e)
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -147,7 +101,7 @@ def register():
         verification_link = f"http://34.122.99.160:8080/verify-email/{uid}"
         subject = "Verifica il tuo indirizzo email"
         message = f"Per favore, verifica il tuo indirizzo email cliccando il seguente link: {verification_link}"
-        send_email(data['email'], subject, message)
+        email_manager.send_email(data['email'], subject, message)
 
         return jsonify({
             "message": "User registered successfully. Please check your email for the confirmation link.",
@@ -374,41 +328,6 @@ def get_patient_operations(patient_id):
         return jsonify({'error': str(e)}), 500
 
 
-def get_patient_information(uid):
-    """
-    Recupera le informazioni principali di un paziente dal database.
-    
-    Args:
-        uid: ID univoco del paziente
-        
-    Returns:
-        Tupla contenente (nome, cognome, data di nascita, codice fiscale, indirizzo, CAP, genere)
-        o None se il paziente non viene trovato o in caso di errore
-    """
-    try:
-        # Usa il manager per recuperare i dati del paziente
-        patient_data = firestore_manager.get_document('users', uid)
-        
-        if patient_data:
-            # Estrai i dettagli del paziente usando il metodo get con valori di default
-            return (
-                patient_data.get("name", ""),
-                patient_data.get("family_name", ""),
-                patient_data.get("birthdate", ""),
-                patient_data.get("tax_code", ""),
-                patient_data.get("address", ""),
-                patient_data.get("cap_code", ""),
-                patient_data.get("gender", "")
-            )
-        else:
-            print(f"Nessun paziente trovato con UID: {uid}")
-            return None
-
-    except Exception as e:
-        print("Errore nel recupero delle informazioni del paziente:", str(e))
-        return None
-    
-
 @app.route('/api/notifications', methods=['POST'])
 def send_notification():
     try:
@@ -478,9 +397,6 @@ def check_email_verification():
         return jsonify({"error": "Internal server error"}), 500
 
 
-
-
-
 @app.route('/verify-email/<string:uid>', methods=['GET'])
 def verify_email(uid):
     if not uid:
@@ -502,7 +418,8 @@ def verify_email(uid):
         return jsonify({"error": "Utente non trovato"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
+
+
 @app.route('/send-reset-email', methods=['POST'])
 def send_reset_email():
     try:
@@ -526,7 +443,7 @@ def send_reset_email():
         message = f"Per favore, resetta la tua password cliccando il seguente link: {verification_link}"
         
         try:
-            send_email(email, subject, message)
+            email_manager.send_email(email, subject, message)
         except Exception as e:
             # Gestione dell'errore durante l'invio dell'email
             return jsonify({"error": "Errore durante l'invio del link di reset: " + str(e)}), 500
@@ -539,57 +456,24 @@ def send_reset_email():
         # Gestione dell'errore generico
         return jsonify({"error": f"Errore durante l'invio del link di reset: {str(e)}"}), 500
 
-    
-
-def get_gcs_bucket():
-    """Ottiene il bucket di Google Cloud Storage."""
-    storage_client = storage.Client()
-    bucket_name = 'osteoarthritis-portal-archive'
-    print(f"Connessione al bucket: {bucket_name}")
-    return storage_client.bucket(bucket_name)
-
 
 @app.route('/api/patients/<patient_id>/radiographs', methods=['GET'])
 def get_patient_radiographs(patient_id):
-    try:        
-        # Ottieni il bucket
-        bucket = get_gcs_bucket()
-
-        # Elenco di radiografie associate all'ID del paziente
-        prefix = f"{patient_id}/"
+    """
+    Endpoint per ottenere tutte le radiografie di un paziente.
+    """
+    try:
+        radiographs = gcs_manager.list_patient_radiographs(patient_id)
         
-        blobs = list(bucket.list_blobs(prefix=prefix))
-
-        # Crea una lista di URL delle radiografie che rispettano il formato
-        radiographs = []
+        response = [{
+            "url": rad.url,
+            "name": rad.name,
+            "date": rad.created_at.strftime("%Y-%m-%d")
+        } for rad in radiographs]
         
-        for blob in blobs:
-            # Filtra solo i file con nome 'original_imageX.png'
-            if 'original_image' in blob.name and blob.name.endswith('.png'):
-                try:
-                    # Verifica che l'URL pubblico sia accessibile prima di aggiungerlo alla lista
-                    response = requests.head(blob.public_url)
-                    
-                    if response.status_code == 200:
-                        radiographs.append({
-                            "url": blob.public_url,
-                            "name": blob.name,
-                            "date": blob.time_created.strftime("%Y-%m-%d")
-                        })
-                    else:
-                        print(f"File non accessibile (HTTP {response.status_code}): {blob.name}")
-                except Exception as e:
-                    print(f"[ERROR] Errore di accesso per il blob {blob.name}: {e}")
-
-        # Restituisci l'elenco filtrato delle radiografie come JSON
-        return jsonify(radiographs), 200
-
-    except Exception as e:
-        print(f"[ERROR] Errore durante il recupero delle radiografie: {str(e)}")
+        return jsonify(response), 200
+    except GCSManagerException as e:
         return jsonify({"error": str(e)}), 500
-
-
-
 
 
 @app.route('/api/download-radiograph', methods=['GET'])
@@ -625,9 +509,13 @@ def download_radiograph():
 
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    """
+    Genera una heatmap Grad-CAM per l'immagine data.
+    """
     resnet_model = model.get_layer('resnet50')
     last_conv_layer = resnet_model.get_layer(last_conv_layer_name)
     last_conv_layer_model = tf.keras.models.Model(resnet_model.input, last_conv_layer.output)
+    
     classifier_input = tf.keras.layers.Input(shape=last_conv_layer.output.shape[1:])
     x = classifier_input
     for layer in model.layers[1:]:
@@ -650,204 +538,112 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
     return heatmap.numpy()
 
-def preprocess_image(file):
-    img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
-    equalized_img = cv2.equalizeHist(img)
-    img_rgb = cv2.cvtColor(equalized_img, cv2.COLOR_GRAY2RGB)
-    img_array = tf.keras.utils.img_to_array(img_rgb)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
-    return img_array, img_rgb
-
-def predict_class(img_array, model):
-    predictions = model.predict(img_array)
-    predicted_class = np.argmax(predictions[0])
-    confidence = float(np.max(predictions[0]))
-    return predicted_class, confidence
-
-
-def generate_gradcam(img_array, model, predicted_class, img_rgb):
-    heatmap = make_gradcam_heatmap(img_array, model, "conv5_block3_out", pred_index=predicted_class)
-    heatmap = np.uint8(255 * heatmap)  # Normalizza la heatmap
-    heatmap = cv2.resize(heatmap, (img_rgb.shape[1], img_rgb.shape[0]))  # Ridimensiona
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)  # Applica una mappa di colore
-    superimposed_img = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)  # Sovrapponi la heatmap
-    return superimposed_img
-
-
-def save_gradcam_image(superimposed_img, user_uid):
-    gradcam_file = io.BytesIO()
-    _, buffer = cv2.imencode('.png', superimposed_img)
-    gradcam_file.write(buffer)
-    gradcam_file.seek(0)
-
-    return gradcam_file
-
-
-def upload_file_to_gcs(file, path, name, content_type=None):
-    """Funzione per caricare file su Google Cloud Storage."""
-
-    # Ottieni il bucket
-    bucket = get_gcs_bucket()
-    blob = bucket.blob(f"{path}/{name}")
-
-    # Carica il file
-    blob.upload_from_file(file, content_type=content_type, rewind=True)
-
-    # Restituisci l'URL pubblico del file
-    blob.make_public()
-    return blob.public_url
-
 
 @app.route('/upload-to-dataset', methods=['POST'])
 def upload_to_dataset():
+    """
+    Endpoint per caricare un'immagine nel dataset.
+    """
     try:
-        # Ottieni i dati dal form
         file = request.files['file']
         patient_id = request.form.get('patientID')
-        side = request.form.get('side', 'Unknown')  # Default: Unknown side
-
-        # Imposta il nome del file
+        side = request.form.get('side', 'Unknown')
+        
         file_name = f"{patient_id}_{side}_{file.filename}"
-
-        # Carica il file nella cartella 'dataset'
-        upload_file_to_gcs(file, "dataset", file_name, file.content_type)
-
-        return {"message": "File caricato con successo."}, 200
-
-    except Exception as e:
-        print(f"Errore durante il caricamento del file: {e}")
-        return {"error": str(e)}, 500
-
-
-def get_image_url(user_uid, folder_name, image_name):
-    """Restituisce l'URL di un'immagine nel bucket Google Cloud Storage."""
-    # Path dell'immagine
-    path = f"{user_uid}/{folder_name}/{image_name}"
-
-    # Ottieni il bucket
-    bucket = get_gcs_bucket()
-    blob = bucket.blob(path)
-
-    # Verifica se il blob esiste prima di renderlo pubblico
-    if blob.exists():
-        blob.make_public()
-        return blob.public_url
-    else:
-        print(f"Debug: Immagine {path} non trovata.")
-        return None
-
-
-from concurrent.futures import ThreadPoolExecutor
-
-def process_folder(bucket, user_uid, folder_name, folder_index):
-    """
-    Processa una singola cartella nel bucket e restituisce i dati della radiografia.
-    """
-    try:
-        original_url = get_image_url(user_uid, folder_name, f"original_image{folder_index}.png")
-        gradcam_url = get_image_url(user_uid, folder_name, f"gradcam_image{folder_index}.png")
-        info_txt = get_image_url(user_uid, folder_name, f"info.txt")
-        radiography_id = read_radiograph_id_from_info(f"{user_uid}/{folder_name}/info.txt")
-
-        return {
-            'original_image': original_url,
-            'gradcam_image': gradcam_url,
-            'info_txt': info_txt,
-            'radiography_id': radiography_id,
-        }
-    except Exception as e:
-        print(f"Errore durante l'elaborazione della cartella {folder_name}: {str(e)}")
-        return None
+        
+        url = gcs_manager.upload_file(
+            file=file,
+            destination_path=f"dataset/{file_name}",
+            make_public=True,
+            content_type=file.content_type
+        )
+        
+        return jsonify({"message": "File caricato con successo.", "url": url}), 200
+    except GCSManagerException as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/get_radiographs/<user_uid>', methods=['GET'])
 def get_radiographs(user_uid):
+    """
+    Endpoint per ottenere tutte le radiografie di un utente.
+    """
     try:
-        bucket = get_gcs_bucket()
-        num_folders, folders = count_existing_folders(user_uid, return_folders=True)
-
-        if num_folders == 0:
+        print(" -- userID: ", user_uid)
+        num_radiographs = gcs_manager.count_patient_radiographs(user_uid)
+        print(" -- numero radiografie: ", num_radiographs)
+        if num_radiographs == 0:
             return jsonify([])
 
-        # Parallelizza il caricamento dei dati delle cartelle
-        with ThreadPoolExecutor() as executor:
-            radiographs = list(executor.map(
-                lambda folder: process_folder(bucket, user_uid, folder.split('/')[-1], int(folder.split('/')[-1].replace('Radiografia', ''))),
-                folders
-            ))
+        radiographs = []
+        for i in range(1, num_radiographs + 1):
+            try:
+                # Genera URL pubblici per le immagini
+                original_blob = gcs_manager.bucket.blob(f"{user_uid}/Radiografia{i}/original_image{i}.png")
+                gradcam_blob = gcs_manager.bucket.blob(f"{user_uid}/Radiografia{i}/gradcam_image{i}.png")
+                
+                if not original_blob.exists() or not gradcam_blob.exists():
+                    print(f" -- Radiografia {i} non trovata")
+                    continue
+
+                original_blob.make_public()
+                gradcam_blob.make_public()
+
+                original_url = original_blob.public_url
+                gradcam_url = gradcam_blob.public_url
+
+                # Recupera informazioni dalla radiografia
+                info = gcs_manager.get_radiograph_info(user_uid, i)
+
+                radiographs.append({
+                    'original_image': original_url,
+                    'gradcam_image': gradcam_url,
+                    'info_txt': None,
+                    'radiography_id': info.get('ID radiografia', '')
+                })
+            except GCSManagerException as e:
+                print(f"Errore per la radiografia {i}: {str(e)}")
+                continue
 
         return jsonify(radiographs)
-
-    except Exception as e:
+    except GCSManagerException as e:
         return jsonify({'error': str(e)}), 500
 
-    
+
 @app.route('/get_radiographs_info/<user_uid>/<idx>', methods=['GET'])
 def get_radiographs_info(user_uid, idx):
-    bucket = get_gcs_bucket()
-    path = "" + str(user_uid) + "/Radiografia" + str(idx) + "/info.txt"
-    info_blob = bucket.blob(path)
-    info_content = info_blob.download_as_text()
-
-    radiographyInfo = {
-        "name": "",
-        "surname": "",
-        "birthdate": "",
-        "tax_code": "",
-        "address": "",
-        "cap_code": "",
-        "gender": "",
-        "userId": "",
-        "radiography_id": "",
-        "date": "",
-        "prediction": "",
-        "side": "",
-        "confidence": "",
-        "doctorLoaded": "",
-        "doctorUid": "",
-        "doctorID": "",
-    }
-
-    for line in info_content.splitlines():
-        if line.startswith("UID paziente:"):
-            radiographyInfo["userId"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Nome paziente:"):
-            radiographyInfo["name"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Cognome paziente:"):
-            radiographyInfo["surname"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Data di nascita paziente:"):
-            radiographyInfo["birthdate"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Codice fiscale paziente:"):
-            radiographyInfo["tax_code"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Indirizzo paziente:"):
-            radiographyInfo["address"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("CAP paziente:"):
-            radiographyInfo["cap_code"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Genere paziente:"):
-            radiographyInfo["gender"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("ID radiografia:"):
-            radiographyInfo["radiography_id"] = line.split(": ", 1)[1].strip()            
-        elif line.startswith("Data di caricamento:"):
-            radiographyInfo["date"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Classe predetta:"):
-            radiographyInfo["prediction"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Lato del ginocchio:"):
-            radiographyInfo["side"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Confidenza:"):
-            radiographyInfo["confidence"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Radiografia caricata da:"):
-            radiographyInfo["doctorLoaded"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("UID dottore:"):
-            radiographyInfo["doctorUid"] = line.split(": ", 1)[1].strip()
-        elif line.startswith("Codice identificativo dottore:"):
-            radiographyInfo["doctorID"] = line.split(": ", 1)[1].strip()
-
-    return jsonify(radiographyInfo)
+    """
+    Endpoint per ottenere le informazioni di una specifica radiografia.
+    """
+    try:
+        info = gcs_manager.get_radiograph_info(user_uid, int(idx))
+        
+        radiography_info = {
+            "name": info.get('Nome paziente', ''),
+            "surname": info.get('Cognome paziente', ''),
+            "birthdate": info.get('Data di nascita paziente', ''),
+            "tax_code": info.get('Codice fiscale paziente', ''),
+            "address": info.get('Indirizzo paziente', ''),
+            "cap_code": info.get('CAP paziente', ''),
+            "gender": info.get('Genere paziente', ''),
+            "userId": info.get('UID paziente', ''),
+            "radiography_id": info.get('ID radiografia', ''),
+            "date": info.get('Data di caricamento', ''),
+            "prediction": info.get('Classe predetta', ''),
+            "side": info.get('Lato del ginocchio', ''),
+            "confidence": info.get('Confidenza', ''),
+            "doctorLoaded": info.get('Radiografia caricata da', ''),
+            "doctorUid": info.get('UID dottore', ''),
+            "doctorID": info.get('Codice identificativo dottore', '')
+        }
+        
+        return jsonify(radiography_info)
+    except GCSManagerException as e:
+        return jsonify({'error': str(e)}), 500
     
 def read_radiograph_id_from_info(file_path):
     """Legge l'ID della radiografia dal file info.txt all'interno del bucket di Google Cloud Storage."""
-    bucket = get_gcs_bucket()  # Ottiene il bucket
+    bucket = gcs_manager.bucket()  # Ottiene il bucket
     info_blob = bucket.blob(file_path)
     info_content = info_blob.download_as_text()
     
@@ -861,27 +657,6 @@ def read_radiograph_id_from_info(file_path):
     return radiograph_id
 
 
-def count_existing_folders(user_uid, return_folders=False):
-    """
-    Conta il numero di cartelle per un dato UID utente e, opzionalmente, restituisce l'elenco delle cartelle.
-    """
-    bucket = get_gcs_bucket()
-    all_blobs = bucket.list_blobs(prefix=f"{user_uid}/")
-
-    found_folders = set()
-
-    for blob in all_blobs:
-        folder_name = '/'.join(blob.name.split('/')[:-1])
-        if folder_name:  # Ignora i blob senza una struttura di cartelle
-            found_folders.add(folder_name)
-
-    if return_folders:
-        # Ordina le cartelle per numero crescente
-        sorted_folders = sorted(found_folders, key=lambda x: int(x.split('/')[-1].replace('Radiografia', '')))
-        return len(sorted_folders), sorted_folders
-
-    return len(found_folders)
-
 
 from datetime import datetime
 import json
@@ -889,43 +664,38 @@ import uuid
 
 @app.route('/predict', methods=['POST'])
 def predict():
+    """
+    Endpoint per predire la classe di una radiografia e salvarla.
+    """
     if 'file' not in request.files:
-        print("Debug: Nessun file trovato nella richiesta.")
         return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
-    doctor_data = request.form.get('userData')
+    try:
+        doctor_data = json.loads(request.form.get('userData'))
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Invalid user data'}), 400
+
     patient_uid = request.form.get('selectedPatientID')
     knee_side = request.form.get('selectedSide')
 
     try:
-        doctor_data_dict = json.loads(doctor_data)
-    except json.JSONDecodeError:
-        print("Debug: Errore nella decodifica di doctor_data.")
-        return jsonify({'error': 'Invalid user data'}), 400
+        num_folder = gcs_manager.count_patient_radiographs(patient_uid)
 
-    try:
-        # Conta le radiografie esistenti
-        num_folder = count_existing_folders(patient_uid)
+        # Preprocessa e predici
+        img_array, img_rgb = model_manager.preprocess_image(file)
+        predicted_class, confidence = model_manager.predict_class(img_array)
 
-        # Pre-processa e carica l'immagine originale
-        img_array, img_rgb = preprocess_image(file)
-        original_image_url = upload_file_to_gcs(
-            file, f"{patient_uid}/Radiografia{num_folder + 1}", f"original_image{num_folder + 1}.png"
-        )
+        # Genera Grad-CAM
+        superimposed_img = model_manager.generate_gradcam(img_array, predicted_class, img_rgb)
+        
+        # Prepara i file per il caricamento
+        gradcam_file = io.BytesIO()
+        _, buffer = cv2.imencode('.png', superimposed_img)
+        gradcam_file.write(buffer)
+        gradcam_file.seek(0)
 
-        # Predici la classe
-        predicted_class, confidence = predict_class(img_array, model)
-        #print(f"Debug: Classe predetta - {predicted_class}, Confidenza: {confidence}")
-
-        # Genera l'immagine Grad-CAM
-        superimposed_img = generate_gradcam(img_array, model, predicted_class, img_rgb)
-        gradcam_file = save_gradcam_image(superimposed_img, patient_uid)
-        gradcam_image_url = upload_file_to_gcs(
-            gradcam_file, f"{patient_uid}/Radiografia{num_folder + 1}", f"gradcam_image{num_folder + 1}.png"
-        )
-
-        # Definisce l'etichetta della classe
+        # Prepara le informazioni
         class_labels = {
             0: 'Classe 1: Normale',
             1: 'Classe 2: Lieve osteoartrite',
@@ -934,12 +704,11 @@ def predict():
             4: 'Classe 5: Avanzata osteoartrite'
         }
         predicted_label = class_labels.get(predicted_class, 'Unknown class')
-
         radiograph_id = str(uuid.uuid4())
 
-        name, surname, birthdate, tax_code, address, cap_code, gender = get_patient_information(patient_uid)
+        patient_info = firestore_manager.get_patient_information(patient_uid)
+        name, surname, birthdate, tax_code, address, cap_code, gender = patient_info
 
-        # Crea il contenuto del file di testo
         info_content = (
             f"UID paziente: {patient_uid}\n"
             f"Nome paziente: {name}\n"
@@ -954,31 +723,29 @@ def predict():
             f"Classe predetta: {predicted_label}\n"
             f"Lato del ginocchio: {knee_side}\n"
             f"Confidenza: {confidence:.2f}\n"
-            f"Radiografia caricata da: {doctor_data_dict['name']} {doctor_data_dict['family_name']}\n"
-            f"UID dottore: {doctor_data_dict['uid']}\n"
-            f"Codice identificativo dottore: {doctor_data_dict['doctorID']}\n"
+            f"Radiografia caricata da: {doctor_data['name']} {doctor_data['family_name']}\n"
+            f"UID dottore: {doctor_data['uid']}\n"
+            f"Codice identificativo dottore: {doctor_data['doctorID']}\n"
         )
 
-        info_file = io.BytesIO(info_content.encode('utf-8'))
-
-        # Carica il "file" di testo su Google Cloud Storage
-        info_file_url = upload_file_to_gcs(
-            info_file,
-            f"{patient_uid}/Radiografia{num_folder + 1}",
-            "info.txt",
-            content_type="text/plain"
+        # Salva tutti i file
+        urls = gcs_manager.save_radiograph(
+            patient_id=patient_uid,
+            original_image=file,
+            gradcam_image=gradcam_file,
+            info_content=info_content,
+            index=num_folder + 1
         )
 
         return jsonify({
             'predicted_class': predicted_label,
             'confidence': confidence,
-            'original_image': original_image_url,
-            'gradcam_image': gradcam_image_url,
-            'info_file': info_file_url
+            'original_image': urls['original_image'],
+            'gradcam_image': urls['gradcam_image'],
+            'info_file': urls['info_file']
         })
 
-    except Exception as e:
-        print(f"Debug: Errore durante la predizione - {str(e)}")
+    except GCSManagerException as e:
         return jsonify({'error': str(e)}), 500
 
 

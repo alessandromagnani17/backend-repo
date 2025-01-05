@@ -360,7 +360,7 @@ class GCSManager:
                 - 'original_image': URL pubblico dell'immagine originale.
                 - 'gradcam_image': URL pubblico dell'immagine Grad-CAM.
                 - 'info_txt': Valore di compatibilità, impostato a None.
-                - 'radiography_id': ID della radiografia.
+                - 'radiograph_id': ID della radiografia.
 
         Raises:
             GCSManagerException: Se si verifica un errore durante il processamento della cartella.
@@ -376,7 +376,7 @@ class GCSManager:
                 'original_image': original_url,
                 'gradcam_image': gradcam_url,
                 'info_txt': None,  # Mantenuto per compatibilità
-                'radiography_id': info.get('ID radiografia', '')
+                'radiograph_id': info.get('ID radiografia', '')
             }
         except Exception as e:
             raise GCSManagerException(f"Errore nel processamento della cartella: {str(e)}")

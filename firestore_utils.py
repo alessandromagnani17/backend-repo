@@ -43,6 +43,7 @@ class FirestoreManager:
         """
         doc_ref = self.db.collection(collection).document(doc_id)
         doc = doc_ref.get()
+        
         return doc.to_dict() if doc.exists else None
 
 
@@ -255,7 +256,7 @@ class FirestoreManager:
 
     def get_patient_information(self, uid: str) -> Dict[str, Any]:
         """
-        Recupera le informazioni principali di un paziente.
+        Recupera le informazioni di un paziente.
 
         Args:
             uid: ID dell'utente (paziente).

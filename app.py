@@ -599,7 +599,7 @@ def get_radiographs(user_uid):
                     'original_image': original_url,
                     'gradcam_image': gradcam_url,
                     'info_txt': None,
-                    'radiography_id': info.get('ID radiografia', '')
+                    'radiograph_id': info.get('ID radiografia', '')
                 })
             except GCSManagerException as e:
                 print(f"Errore per la radiografia {i}: {str(e)}")
@@ -618,7 +618,7 @@ def get_radiographs_info(user_uid, idx):
     try:
         info = gcs_manager.get_radiograph_info(user_uid, int(idx))
         
-        radiography_info = {
+        radiograph_info = {
             "name": info.get('Nome paziente', ''),
             "surname": info.get('Cognome paziente', ''),
             "birthdate": info.get('Data di nascita paziente', ''),
@@ -627,7 +627,7 @@ def get_radiographs_info(user_uid, idx):
             "cap_code": info.get('CAP paziente', ''),
             "gender": info.get('Genere paziente', ''),
             "userId": info.get('UID paziente', ''),
-            "radiography_id": info.get('ID radiografia', ''),
+            "radiograph_id": info.get('ID radiografia', ''),
             "date": info.get('Data di caricamento', ''),
             "prediction": info.get('Classe predetta', ''),
             "side": info.get('Lato del ginocchio', ''),
@@ -637,7 +637,7 @@ def get_radiographs_info(user_uid, idx):
             "doctorID": info.get('Codice identificativo dottore', '')
         }
         
-        return jsonify(radiography_info)
+        return jsonify(radiograph_info)
     except GCSManagerException as e:
         return jsonify({'error': str(e)}), 500
     
@@ -707,17 +707,24 @@ def predict():
         radiograph_id = str(uuid.uuid4())
 
         patient_info = firestore_manager.get_patient_information(patient_uid)
-        name, surname, birthdate, tax_code, address, cap_code, gender = patient_info
+        if not patient_info:
+            return jsonify({'error': 'Unable to retrieve patient information'}), 400
 
+        # Verifica che tutti i campi necessari siano presenti
+        required_fields = ['name', 'family_name', 'birthdate', 'tax_code', 'address', 'cap_code', 'gender']
+        missing_fields = [field for field in required_fields if not patient_info.get(field)]
+        if missing_fields:
+            return jsonify({'error': f'Missing patient information: {", ".join(missing_fields)}'}), 400
+        
         info_content = (
             f"UID paziente: {patient_uid}\n"
-            f"Nome paziente: {name}\n"
-            f"Cognome paziente: {surname}\n"
-            f"Data di nascita paziente: {birthdate}\n"
-            f"Codice fiscale paziente: {tax_code}\n"
-            f"Indirizzo paziente: {address}\n"
-            f"CAP paziente: {cap_code}\n"
-            f"Genere paziente: {gender}\n"
+            f"Nome paziente: {patient_info['name']}\n"  
+            f"Cognome paziente: {patient_info['family_name']}\n"
+            f"Data di nascita paziente: {patient_info['birthdate']}\n"
+            f"Codice fiscale paziente: {patient_info['tax_code']}\n"
+            f"Indirizzo paziente: {patient_info['address']}\n"
+            f"CAP paziente: {patient_info['cap_code']}\n"
+            f"Genere paziente: {patient_info['gender']}\n"
             f"ID radiografia: {radiograph_id}\n"
             f"Data di caricamento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"Classe predetta: {predicted_label}\n"

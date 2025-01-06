@@ -46,3 +46,4 @@ class NotificationController:
             return jsonify({"error": "Notifica non trovata"}), 404
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+        

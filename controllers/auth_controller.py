@@ -184,3 +184,4 @@ class AuthController:
 
         attempts_left = users[0].get('loginAttemptsLeft', 0)
         return jsonify({"loginAttemptsLeft": attempts_left}), 200
+    

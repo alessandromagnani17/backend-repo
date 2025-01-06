@@ -489,38 +489,6 @@ def download_radiograph():
         print(f"Errore durante il download della radiografia: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
-    """
-    Genera una heatmap Grad-CAM per l'immagine data.
-    """
-    resnet_model = model.get_layer('resnet50')
-    last_conv_layer = resnet_model.get_layer(last_conv_layer_name)
-    last_conv_layer_model = tf.keras.models.Model(resnet_model.input, last_conv_layer.output)
-    
-    classifier_input = tf.keras.layers.Input(shape=last_conv_layer.output.shape[1:])
-    x = classifier_input
-    for layer in model.layers[1:]:
-        x = layer(x)
-    classifier_model = tf.keras.models.Model(classifier_input, x)
-
-    with tf.GradientTape() as tape:
-        last_conv_layer_output = last_conv_layer_model(img_array)
-        tape.watch(last_conv_layer_output)
-        preds = classifier_model(last_conv_layer_output)
-        if pred_index is None:
-            pred_index = tf.argmax(preds[0])
-        class_channel = preds[:, pred_index]
-
-    grads = tape.gradient(class_channel, last_conv_layer_output)
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    last_conv_layer_output = last_conv_layer_output[0]
-    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-    return heatmap.numpy()
-
-
 @app.route('/upload-to-dataset', methods=['POST'])
 def upload_to_dataset():
     """
@@ -622,23 +590,6 @@ def get_radiographs_info(user_uid, idx):
         return jsonify(radiograph_info)
     except GCSManagerException as e:
         return jsonify({'error': str(e)}), 500
-    
-def read_radiograph_id_from_info(file_path):
-    """Legge l'ID della radiografia dal file info.txt all'interno del bucket di Google Cloud Storage."""
-    bucket = gcs_manager.bucket()  # Ottiene il bucket
-    info_blob = bucket.blob(file_path)
-    info_content = info_blob.download_as_text()
-    
-    # Trova la riga con l'ID della radiografia
-    radiograph_id = None
-    for line in info_content.splitlines():
-        if line.startswith("ID radiografia:"):
-            radiograph_id = line.split(":")[1].strip()
-            break
-    
-    return radiograph_id
-
-
 
 from datetime import datetime
 import json

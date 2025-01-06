@@ -57,3 +57,4 @@ class UserController:
             return jsonify(verified_patients), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+        

@@ -12,7 +12,7 @@ class AppConfig:
 
     # Firebase
     FIREBASE_CRED_PATH = os.path.join(
-        os.path.abspath(os.path.dirname(file)), 
+        os.path.abspath(os.path.dirname(__file__)), 
         '..', 
         'config', 
         'firebase-adminsdk.json'
@@ -20,7 +20,7 @@ class AppConfig:
     
     # Google Cloud Storage
     GCS_CRED_PATH = os.path.join(
-        os.path.abspath(os.path.dirname(file)), 
+        os.path.abspath(os.path.dirname(__file__)), 
         '..', 
         'config', 
         'meta-geography-438711-r1-de4779cd8c73.json'

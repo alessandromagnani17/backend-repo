@@ -12,7 +12,7 @@ class AppConfig:
 
     # Firebase
     FIREBASE_CRED_PATH = os.path.join(
-        os.path.abspath(os.path.dirname(__file__)), 
+        os.path.abspath(os.path.dirname(file)), 
         '..', 
         'config', 
         'firebase-adminsdk.json'
@@ -20,7 +20,7 @@ class AppConfig:
     
     # Google Cloud Storage
     GCS_CRED_PATH = os.path.join(
-        os.path.abspath(os.path.dirname(__file__)), 
+        os.path.abspath(os.path.dirname(file)), 
         '..', 
         'config', 
         'meta-geography-438711-r1-de4779cd8c73.json'
@@ -30,8 +30,8 @@ class AppConfig:
     # Email
     SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
     SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
-    SMTP_USERNAME = os.environ.get('SMTP_USERNAME')
-    SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD')
+    SMTP_USERNAME = 'andyalemonta999@gmail.com'
+    SMTP_PASSWORD = "xqnk mrct xtns lvrw"
     
     # Model
     MODEL_PATH = 'MODELLO/pesi.h5'

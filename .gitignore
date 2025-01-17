@@ -1,4 +1,5 @@
 .env
 venv_py39/
 config/firebase-adminsdk.json
-config/meta-geography-438711-r1-de4779cd8c73.json.DS_Store
+config/meta-geography-438711-r1-de4779cd8c73.json
+.DS_Store

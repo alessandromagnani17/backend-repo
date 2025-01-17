@@ -13,6 +13,9 @@ class RadiographController:
         self.firestore_manager = managers['firestore']
 
     def get_patient_radiographs(self, patient_id):
+        """
+        Restituisce la lista delle radiografie di un paziente.
+        """
         try:
             radiographs = self.gcs_manager.list_patient_radiographs(patient_id)
             response = [{
@@ -25,6 +28,9 @@ class RadiographController:
             return jsonify({"error": str(e)}), 500
 
     def download_radiograph(self, file_url, filename):
+        """
+        Consente il download di una radiografia dal sistema.
+        """
         try:
             if not file_url:
                 return jsonify({"error": "File URL is missing"}), 400
@@ -44,6 +50,9 @@ class RadiographController:
             return jsonify({"error": str(e)}), 500
 
     def upload_to_dataset(self, file, form_data):
+        """
+        Carica una radiografia nel dataset del paziente.
+        """
         try:
             patient_id = form_data.get('patientID')
             side = form_data.get('side', 'Unknown')
@@ -64,6 +73,9 @@ class RadiographController:
             return jsonify({"error": str(e)}), 500
 
     def get_radiographs(self, user_uid):
+        """
+        Restituisce le radiografie di un utente, incluse le immagini Grad-CAM.
+        """
         try:
             num_radiographs = self.gcs_manager.count_patient_radiographs(user_uid)
             if num_radiographs == 0:
@@ -100,6 +112,9 @@ class RadiographController:
             return jsonify({'error': str(e)}), 500
 
     def get_radiographs_info(self, user_uid, idx):
+        """
+        Fornisce i dettagli di una specifica radiografia di un utente.
+        """
         try:
             info = self.gcs_manager.get_radiograph_info(user_uid, int(idx))
             
@@ -128,6 +143,9 @@ class RadiographController:
         
 
     def predict(self, file, form_data):
+        """
+        Effettua una predizione sulla radiografia e genera un'immagine Grad-CAM.
+        """
         try:
             doctor_data = json.loads(form_data.get('userData'))
             patient_uid = form_data.get('selectedPatientID')

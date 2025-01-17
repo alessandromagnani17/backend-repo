@@ -3,7 +3,7 @@ from email.mime.multipart import MIMEMultipart
 import smtplib
 
 class EmailManager:
-    def __init__(self, sender_email: str = "andyalemonta@gmail.com", sender_password: str = "vlpy jeea avjx feql"):
+    def __init__(self, sender_email: str, sender_password: str):
         """
         Inizializza il gestore email con le credenziali del mittente.
 
@@ -35,6 +35,7 @@ class EmailManager:
 
         try:
             with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.set_debuglevel(1)
                 server.starttls()
                 server.login(self.sender_email, self.sender_password)
                 server.sendmail(self.sender_email, recipient_email, message.as_string())

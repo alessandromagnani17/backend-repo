@@ -7,6 +7,9 @@ class AuthController:
         self.email_manager = managers['email']
 
     def register(self, data):
+        """
+        Registra un nuovo utente nel sistema.
+        """
         try:
             auth_data = {
                 'email': data['email'],
@@ -51,6 +54,9 @@ class AuthController:
             return jsonify({"error": str(e), "message": "Controlla i dati forniti."}), 400
 
     def login(self, data):
+        """
+        Esegue il login di un utente autenticato tramite ID token.
+        """
         if 'idToken' not in data:
             return jsonify({"error": "ID token is required"}), 400
 
@@ -79,6 +85,9 @@ class AuthController:
             return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
     def check_email_verification(self, data):
+        """
+        Controlla se l'email di un utente è stata verificata.
+        """
         email = data.get('email')
         if not email:
             return jsonify({"error": "Email is required"}), 400
@@ -96,6 +105,9 @@ class AuthController:
             return jsonify({"error": "Internal server error"}), 500
 
     def verify_email(self, uid):
+        """
+        Verifica l'email di un utente dato il suo UID.
+        """
         if not uid:
             return jsonify({"error": "Missing user ID"}), 400
         
@@ -112,6 +124,9 @@ class AuthController:
             return jsonify({"error": str(e)}), 500
 
     def reset_password(self, data):
+        """
+        Resetta la password di un utente.
+        """
         try:
             uid = data.get('uid')
             new_password = data.get('password')
@@ -132,6 +147,9 @@ class AuthController:
             return jsonify({"error": f"Errore: {str(e)}"}), 500
 
     def send_reset_email(self, data):
+        """
+        Invia un'email per il reset della password all'utente.
+        """
         try:
             email = data.get('email')
             if not email:
@@ -153,6 +171,9 @@ class AuthController:
             }), 500
 
     def decrement_attempts(self, data):
+        """
+        Decrementa i tentativi di accesso per un utente.
+        """
         email = data.get('email')
         if not email:
             return jsonify({"error": "Email is required"}), 400
@@ -174,6 +195,9 @@ class AuthController:
         return jsonify({"error": "Failed to update attempts"}), 400
 
     def get_attempts_left(self, data):
+        """
+        Restituisce i tentativi di accesso rimanenti per un utente.
+        """
         email = data.get('email')
         if not email:
             return jsonify({"error": "Email is required"}), 400

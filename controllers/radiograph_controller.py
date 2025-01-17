@@ -15,6 +15,13 @@ class RadiographController:
     def get_patient_radiographs(self, patient_id):
         """
         Restituisce la lista delle radiografie di un paziente.
+
+        Args:
+            patient_id (str): ID del paziente per cui recuperare le radiografie.
+
+        Returns:
+            Response: Oggetto JSON con la lista delle radiografie e codice HTTP 200,
+                      oppure codice HTTP 500 in caso di errore.
         """
         try:
             radiographs = self.gcs_manager.list_patient_radiographs(patient_id)
@@ -30,6 +37,15 @@ class RadiographController:
     def download_radiograph(self, file_url, filename):
         """
         Consente il download di una radiografia dal sistema.
+
+        Args:
+            file_url (str): URL del file da scaricare.
+            filename (str): Nome del file per il download.
+
+        Returns:
+            Response: File scaricato con codice HTTP 200,
+                      codice HTTP 400 se l'URL è mancante,
+                      oppure codice HTTP 500 in caso di errore.
         """
         try:
             if not file_url:
@@ -52,6 +68,16 @@ class RadiographController:
     def upload_to_dataset(self, file, form_data):
         """
         Carica una radiografia nel dataset del paziente.
+
+        Args:
+            file (FileStorage): File della radiografia da caricare.
+            form_data (dict): Dizionario con i dati associati, come:
+                - 'patientID' (str): ID del paziente.
+                - 'side' (str): Lato della radiografia (ad esempio, destro o sinistro).
+
+        Returns:
+            Response: Oggetto JSON con l'URL del file caricato e codice HTTP 200,
+                      oppure codice HTTP 500 in caso di errore.
         """
         try:
             patient_id = form_data.get('patientID')
@@ -75,6 +101,13 @@ class RadiographController:
     def get_radiographs(self, user_uid):
         """
         Restituisce le radiografie di un utente, incluse le immagini Grad-CAM.
+
+        Args:
+            user_uid (str): UID dell'utente.
+
+        Returns:
+            Response: Oggetto JSON con la lista delle radiografie e codice HTTP 200,
+                      oppure codice HTTP 500 in caso di errore.
         """
         try:
             num_radiographs = self.gcs_manager.count_patient_radiographs(user_uid)
@@ -114,6 +147,14 @@ class RadiographController:
     def get_radiographs_info(self, user_uid, idx):
         """
         Fornisce i dettagli di una specifica radiografia di un utente.
+
+        Args:
+            user_uid (str): UID dell'utente.
+            idx (int): Indice della radiografia da recuperare.
+
+        Returns:
+            Response: Oggetto JSON con i dettagli della radiografia e codice HTTP 200,
+                      oppure codice HTTP 500 in caso di errore.
         """
         try:
             info = self.gcs_manager.get_radiograph_info(user_uid, int(idx))
@@ -145,6 +186,18 @@ class RadiographController:
     def predict(self, file, form_data):
         """
         Effettua una predizione sulla radiografia e genera un'immagine Grad-CAM.
+
+        Args:
+            file (FileStorage): File della radiografia da analizzare.
+            form_data (dict): Dizionario contenente i dati necessari:
+                - 'userData' (str): Dati del dottore in formato JSON.
+                - 'selectedPatientID' (str): UID del paziente.
+                - 'selectedSide' (str): Lato della radiografia (ad esempio, destro o sinistro).
+
+        Returns:
+            Response: Oggetto JSON con i risultati della predizione, inclusi il grado di severità,
+                      l'immagine Grad-CAM e i metadati, con codice HTTP 200,
+                      oppure codice HTTP 500 in caso di errore.
         """
         try:
             doctor_data = json.loads(form_data.get('userData'))

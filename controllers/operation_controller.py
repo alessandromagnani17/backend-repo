@@ -7,6 +7,19 @@ class OperationController:
     def add_operation(self, data):
         """
         Aggiunge una nuova operazione per un paziente.
+
+        Args:
+            data (dict): Dizionario contenente i dati dell'operazione. Deve includere:
+                - 'doctorId' (str): ID del dottore che pianifica l'operazione.
+                - 'patientId' (str): ID del paziente per cui è pianificata l'operazione.
+                - 'operationDate' (str): Data dell'operazione.
+                - 'description' (str, opzionale): Descrizione dell'operazione.
+
+        Returns:
+            Response: Oggetto JSON con il messaggio di conferma e i dettagli dell'operazione 
+                      con codice HTTP 201 se la creazione ha successo,
+                      codice HTTP 400 in caso di input non valido,
+                      oppure codice HTTP 500 per errori interni.
         """
         try:
             operation_data = {
@@ -29,7 +42,14 @@ class OperationController:
 
     def get_patient_operations(self, patient_id):
         """
-        Recupera tutte le operazioni di un paziente.
+        Recupera tutte le operazioni pianificate per un paziente.
+
+        Args:
+            patient_id (str): ID del paziente per cui recuperare le operazioni.
+
+        Returns:
+            Response: Oggetto JSON con l'elenco delle operazioni e codice HTTP 200,
+                      oppure codice HTTP 500 in caso di errore interno.
         """
         try:
             operations = self.firestore_manager.query_documents(

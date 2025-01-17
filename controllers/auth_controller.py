@@ -9,6 +9,13 @@ class AuthController:
     def register(self, data):
         """
         Registra un nuovo utente nel sistema.
+
+        Args:
+            data (dict): Dizionario con i dati dell'utente, inclusi email, password e informazioni personali.
+
+        Returns:
+            Response: Oggetto JSON con messaggio di successo e codice HTTP 200,
+                      oppure errore e codice HTTP 400 in caso di problemi.
         """
         try:
             auth_data = {
@@ -56,6 +63,13 @@ class AuthController:
     def login(self, data):
         """
         Esegue il login di un utente autenticato tramite ID token.
+
+        Args:
+            data (dict): Dizionario contenente l'ID token per l'autenticazione.
+
+        Returns:
+            Response: Oggetto JSON con i dettagli dell'utente e codice HTTP 200,
+                      oppure errore e codice HTTP 401, 404 o 500 in caso di problemi.
         """
         if 'idToken' not in data:
             return jsonify({"error": "ID token is required"}), 400
@@ -87,6 +101,13 @@ class AuthController:
     def check_email_verification(self, data):
         """
         Controlla se l'email di un utente è stata verificata.
+
+        Args:
+            data (dict): Dizionario con l'indirizzo email dell'utente.
+
+        Returns:
+            Response: Oggetto JSON con messaggio di verifica e codice HTTP 200,
+                      oppure errore e codice HTTP 400, 403 o 404.
         """
         email = data.get('email')
         if not email:
@@ -107,6 +128,13 @@ class AuthController:
     def verify_email(self, uid):
         """
         Verifica l'email di un utente dato il suo UID.
+
+        Args:
+            uid (str): Identificativo univoco dell'utente.
+
+        Returns:
+            Response: Oggetto JSON con messaggio di verifica e codice HTTP 200,
+                      oppure errore e codice HTTP 400 o 404.
         """
         if not uid:
             return jsonify({"error": "Missing user ID"}), 400
@@ -126,6 +154,13 @@ class AuthController:
     def reset_password(self, data):
         """
         Resetta la password di un utente.
+
+        Args:
+            data (dict): Dizionario contenente l'UID dell'utente e la nuova password.
+
+        Returns:
+            Response: Oggetto JSON con messaggio di successo e codice HTTP 200,
+                      oppure errore e codice HTTP 400 o 500 in caso di problemi.
         """
         try:
             uid = data.get('uid')
@@ -149,6 +184,13 @@ class AuthController:
     def send_reset_email(self, data):
         """
         Invia un'email per il reset della password all'utente.
+
+        Args:
+            data (dict): Dizionario contenente l'indirizzo email dell'utente.
+
+        Returns:
+            Response: Oggetto JSON con messaggio di invio e codice HTTP 200,
+                      oppure errore e codice HTTP 400 o 500 in caso di problemi.
         """
         try:
             email = data.get('email')
@@ -173,6 +215,13 @@ class AuthController:
     def decrement_attempts(self, data):
         """
         Decrementa i tentativi di accesso per un utente.
+
+        Args:
+            data (dict): Dizionario contenente l'indirizzo email dell'utente.
+
+        Returns:
+            Response: Oggetto JSON con i tentativi rimanenti e codice HTTP 200,
+                      oppure errore e codice HTTP 400 o 404.
         """
         email = data.get('email')
         if not email:
@@ -197,6 +246,13 @@ class AuthController:
     def get_attempts_left(self, data):
         """
         Restituisce i tentativi di accesso rimanenti per un utente.
+
+        Args:
+            data (dict): Dizionario contenente l'indirizzo email dell'utente.
+
+        Returns:
+            Response: Oggetto JSON con i tentativi rimanenti e codice HTTP 200,
+                      oppure errore e codice HTTP 400 o 404.
         """
         email = data.get('email')
         if not email:
